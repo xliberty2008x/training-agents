@@ -12,6 +12,8 @@ directories or separate project repositories.
 
 ## Examples
 
+- `examples/sft-mentor-lab/`: small scripts for inspecting SFT datasets, running
+  a TRL + LoRA smoke train, and preparing baseline-vs-SFT rubric scoring.
 - `examples/gemma4-pi-mono-sft/`: TRL SFT example for
   `google/gemma-4-E2B-it` on `badlogicgames/pi-mono`, with Hugging Face Jobs,
   LoRA, hosted Trackio logging, verified Job IDs, Inspect AI HumanEval/MBPP
@@ -22,6 +24,9 @@ directories or separate project repositories.
 - `program.md`: operating model for Training Agents.
 - `docs/program.md`: staged challenge ladder from SFT to environment GRPO and
   self-distillation.
+- `docs/sft-interactive-playbook.html`: interactive SFT theory playbook with
+  progress tracking, dataset/masking guidance, training triage, eval rubric,
+  and a capstone report builder.
 - `docs/looping-rl.md`: blog post on loop-shaped reinforcement learning for
   agent training systems.
 - `docs/terminal-bench-loop.md`: loop-shaped automation contract for training
