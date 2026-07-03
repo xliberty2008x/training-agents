@@ -64,9 +64,9 @@ uv run examples/sft-mentor-lab/train_lora_sft.py \
   --gradient-accumulation-steps 1
 ```
 
-Then run a modest experiment by increasing `--max-steps`, restoring evaluation,
-and logging to your preferred tracker. If you enable evaluation, keep the script's
-eval split enabled and ensure the split is held out.
+Then run a modest experiment by increasing `--max-steps` and logging to your
+preferred tracker. The script always builds a held-out eval split via
+`--eval-size`; keep it enabled and make sure the split stays truly held out.
 
 ## Week 4: Score Generations
 
