@@ -7,6 +7,8 @@ Generated checkpoints, logs, and datasets should stay outside the tracked repo,
 for example under `workspaces/sft-mentor-lab/` or `outputs/`.
 
 For the theory and mentor workflow, open `../../docs/sft-interactive-playbook.html` in a browser.
+Module 7 covers writing copilot task briefs, acceptance checks, and review
+failure modes so you can direct agents without writing trainers from scratch.
 
 ## Files
 

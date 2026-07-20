@@ -24,9 +24,12 @@ directories or separate project repositories.
 - `program.md`: operating model for Training Agents.
 - `docs/program.md`: staged challenge ladder from SFT to environment GRPO and
   self-distillation.
-- `docs/sft-interactive-playbook.html`: interactive SFT theory playbook with
-  progress tracking, dataset/masking guidance, training triage, eval rubric,
-  and a capstone report builder.
+- `docs/sft-interactive-playbook.html`: standalone interactive SFT course (21
+  lessons + capstone) with progress bars, quizzes, labs, Module 7 on tasking
+  agentic copilots, and a capstone report builder. Loads `sft-course-lib.js` +
+  `sft-course-data.js` from the same folder (`file://` works).
+- `docs/sft-course-check.mjs`: structural + pure-logic verification for the course.
+- `docs/sft-course-e2e.mjs`: Playwright UI e2e (progress, quiz, activity, persistence).
 - `docs/looping-rl.md`: blog post on loop-shaped reinforcement learning for
   agent training systems.
 - `docs/terminal-bench-loop.md`: loop-shaped automation contract for training
