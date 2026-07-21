@@ -94,7 +94,12 @@
 
   function saveMessages() {
     try {
-      localStorage.setItem(UI_KEY, JSON.stringify(messages));
+      // Persist role/text only; AG-UI events are re-synthesized on render so
+      // localStorage does not double-store large deltas.
+      var slim = messages.map(function (m) {
+        return { role: m.role, text: m.text, ts: m.ts };
+      });
+      localStorage.setItem(UI_KEY, JSON.stringify(slim));
     } catch (_) {}
   }
 
