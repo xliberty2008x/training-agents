@@ -226,6 +226,23 @@ assert(scoreTxt.includes("Average delta: 1.5"), "score delta text");
 assert(scoreTxt.includes("OOD"), "OOD regression mentioned");
 
 assert(typeof Lib.buildCourseContext === "function", "buildCourseContext exported");
+assert(typeof Lib.sidebarCollapsedDomClasses === "function", "sidebarCollapsedDomClasses exported");
+assert(typeof Lib.parseOpenCopilotThirdTrackPx === "function", "parseOpenCopilotThirdTrackPx exported");
+assert(Lib.COPILOT_OPEN_TRACK_PX > 320, "COPILOT_OPEN_TRACK_PX > 320");
+assert(
+  Lib.parseOpenCopilotThirdTrackPx("360px minmax(0,1fr) " + Lib.COPILOT_OPEN_TRACK_PX + "px") ===
+    Lib.COPILOT_OPEN_TRACK_PX,
+  "parseOpenCopilotThirdTrackPx reads fixed third track"
+);
+const hideClasses = Lib.sidebarCollapsedDomClasses(true);
+assert(hideClasses.appClass === "sidebar-collapsed", "collapsed app class");
+assert(hideClasses.sidebarClass === "is-collapsed", "collapsed sidebar class");
+// Shipped playbook encodes wider copilot + sidebar collapse
+assert(html.includes("440px") || html.includes(String(Lib.COPILOT_OPEN_TRACK_PX) + "px"), "playbook open copilot track wider than 320");
+assert(html.includes(".app.sidebar-collapsed"), "playbook CSS has sidebar-collapsed");
+assert(html.includes('id="sidebarCollapse"') && html.includes('id="sidebarExpand"'), "playbook sidebar toggle controls");
+assert(html.includes("initSidebarCollapse"), "playbook inits sidebar collapse");
+
 const ctx = Lib.buildCourseContext(
   { completed: { o1: true, m1l1: true }, quiz: {}, notes: {}, activities: {}, capstone: {}, last: "m1l1" },
   { view: "lesson", lessonId: "m1l1" },
