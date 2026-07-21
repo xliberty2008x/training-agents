@@ -43,16 +43,16 @@
     .copilot-icon-btn:hover{background:rgba(255,255,255,.12)}
     .copilot-location{margin-top:.45rem;color:#b9c4dc;font-size:.78rem;font-weight:700;line-height:1.3;overflow-wrap:anywhere;word-break:break-word}
     /* minmax(0,1fr) + min-width:0: grid/flex children default min-width:auto clips long tokens */
-    .copilot-messages{flex:1;min-height:0;min-width:0;overflow-x:hidden;overflow-y:auto;padding:.85rem;display:grid;grid-template-columns:minmax(0,1fr);gap:.65rem;align-content:start}
+    .copilot-messages{flex:1;min-height:0;min-width:0;overflow-x:auto;overflow-y:auto;padding:.85rem;display:grid;grid-template-columns:minmax(0,1fr);gap:.65rem;align-content:start}
     .copilot-empty{color:#b9c4dc;font-size:.88rem;line-height:1.45;padding:.35rem}
-    .copilot-msg{padding:.7rem .75rem;border-radius:14px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-word;box-sizing:border-box}
+    .copilot-msg{padding:.7rem .75rem;border-radius:14px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);min-width:0;max-width:100%;width:100%;overflow-wrap:anywhere;word-break:break-word;box-sizing:border-box;overflow-x:auto}
     .copilot-msg--user{background:rgba(111,76,255,.18);border-color:rgba(111,76,255,.3)}
     .copilot-msg--assistant{background:rgba(0,167,167,.12);border-color:rgba(0,167,167,.28)}
     .copilot-msg--system{background:rgba(255,255,255,.04);color:#c7d0e5}
     .copilot-msg-role{font-size:.72rem;font-weight:850;color:#c7d0e5;margin-bottom:.28rem;text-transform:uppercase;letter-spacing:.04em}
-    .copilot-msg-body{min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-word;font-size:.9rem;line-height:1.45;box-sizing:border-box}
+    .copilot-msg-body{min-width:0;max-width:100%;width:100%;overflow-wrap:anywhere;word-break:break-word;font-size:.9rem;line-height:1.45;box-sizing:border-box;overflow-x:auto}
     .copilot-msg-body--plain{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
-    .copilot-md{white-space:normal;min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+    .copilot-md{white-space:normal;min-width:0;max-width:100%;width:100%;overflow-wrap:anywhere;word-break:break-word;overflow-x:auto}
     .copilot-md .copilot-md-h{margin:.15rem 0 .45rem;font-size:1rem;line-height:1.25;letter-spacing:-.02em;color:#f2f6ff;overflow-wrap:anywhere;word-break:break-word;max-width:100%}
     .copilot-md h1.copilot-md-h{font-size:1.12rem}
     .copilot-md h2.copilot-md-h{font-size:1.02rem}
@@ -60,9 +60,10 @@
     .copilot-md .copilot-md-p{margin:.2rem 0 .45rem;overflow-wrap:anywhere;word-break:break-word;max-width:100%}
     .copilot-md .copilot-md-ul,.copilot-md .copilot-md-ol{margin:.25rem 0 .5rem;padding-left:1.15rem;max-width:100%;min-width:0}
     .copilot-md .copilot-md-li{margin:.15rem 0;overflow-wrap:anywhere;word-break:break-word}
-    .copilot-md .copilot-md-pre{margin:.4rem 0 .55rem;padding:.65rem .7rem;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.1);max-width:100%;min-width:0;overflow-x:auto;overflow-y:auto;font-size:.8rem;line-height:1.4;white-space:pre;box-sizing:border-box}
-    .copilot-md .copilot-md-codeblock{color:#e8edfb;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;word-break:normal;overflow-wrap:normal}
-    .copilot-md .copilot-md-code{padding:.05rem .28rem;border-radius:5px;background:rgba(255,255,255,.1);font-size:.84em;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere;word-break:break-word}
+    /* pre-wrap: mental-model / diagram fences must reflow in the narrow dock (screenshot clip) */
+    .copilot-md .copilot-md-pre{margin:.4rem 0 .55rem;padding:.65rem .7rem;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.1);display:block;width:100%;max-width:100%;min-width:0;overflow-x:auto;overflow-y:auto;font-size:.78rem;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;box-sizing:border-box}
+    .copilot-md .copilot-md-codeblock{display:block;width:100%;max-width:100%;min-width:0;color:#e8edfb;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+    .copilot-md .copilot-md-code{padding:.05rem .28rem;border-radius:5px;background:rgba(255,255,255,.1);font-size:.84em;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere;word-break:break-word;white-space:break-spaces}
     .copilot-md strong{font-weight:850;color:#fff}
     .copilot-working{padding:.4rem .9rem;color:#ffd072;font-size:.82rem;font-weight:800;border-top:1px solid rgba(255,255,255,.08)}
     .copilot-offline-help{padding:.65rem .9rem;margin:0 .75rem .5rem;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#e8edfb;font-size:.82rem;line-height:1.4;white-space:pre-wrap}
