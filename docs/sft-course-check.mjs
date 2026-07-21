@@ -64,6 +64,71 @@ assert(rendered.html.includes("<ul"), "event path renders markdown list");
 assert(rendered.html.includes("code"), "event path renders fenced code");
 assert(!rendered.html.includes("<script"), "markdown escapes raw HTML");
 
+// #18 dock overflow containment: assert shipped CSS (not a re-implemented sheet)
+function cssRuleHas(selectorSnippet, propSnippets) {
+  // Find a rule block that mentions the selector, then require each property snippet.
+  const idx = html.indexOf(selectorSnippet);
+  if (idx < 0) return false;
+  const brace = html.indexOf("{", idx);
+  if (brace < 0 || brace - idx > 120) return false;
+  const end = html.indexOf("}", brace);
+  if (end < 0) return false;
+  const body = html.slice(brace, end + 1);
+  return propSnippets.every((p) => body.includes(p));
+}
+assert(
+  cssRuleHas(".copilot-messages", ["minmax(0,1fr)", "min-width:0", "overflow-x:hidden", "overflow-y:auto"]),
+  "copilot-messages grid/overflow containment"
+);
+assert(
+  cssRuleHas(".copilot-msg{", ["min-width:0", "max-width:100%", "overflow-wrap:anywhere"]),
+  "copilot-msg bubble containment"
+);
+assert(
+  cssRuleHas(".copilot-msg-body{", ["min-width:0", "max-width:100%", "overflow-wrap:anywhere", "word-break:break-word"]),
+  "copilot-msg-body wrap chain"
+);
+assert(
+  cssRuleHas(".copilot-md{", ["min-width:0", "max-width:100%", "overflow-wrap:anywhere"]),
+  "copilot-md containment"
+);
+assert(
+  cssRuleHas(".copilot-md-pre{", ["max-width:100%", "min-width:0", "overflow-x:auto"]),
+  "copilot-md-pre nested horizontal scroll"
+);
+assert(html.includes(".copilot-panel{") && html.includes("min-width:0") && html.includes("overflow:hidden"), "copilot-panel clips to dock");
+
+// Long fixture through real markdown + event path (pipe table, long token, fence)
+const longFixture = [
+  "## Short answer",
+  "",
+  "SFT is next-token prediction only on tokens_the_model_must_learn_to_produce_with_a_very_long_unbroken_identifier_that_would_clip.",
+  "",
+  "| Mode | What is a target? | Meaning |",
+  "|------|-------------------|---------|",
+  "| Assistant-only | Only the assistant span | Loss on assistant tokens only |",
+  "",
+  "```js",
+  "const veryLong = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';",
+  "```",
+].join("\n");
+const longRendered = Agui.renderAssistantFromEvents(
+  Agui.textToAguiEvents(longFixture, { messageId: "overflow-msg", runId: "overflow-run", timestamp: 1 })
+);
+assert(longRendered.html.includes('class="copilot-md-pre"'), "fixture fence uses overflow-safe pre class");
+assert(longRendered.html.includes('class="copilot-md-p"'), "fixture prose uses md paragraph");
+assert(longRendered.html.includes("| Mode | What is a target?"), "fixture keeps pipe-table text");
+assert(longRendered.html.includes("tokens_the_model_must_learn"), "fixture keeps long token for wrap CSS");
+// Markup shape the dock uses for assistant bodies
+const bubbleShape =
+  '<div class="copilot-msg copilot-msg--assistant">' +
+  '<div class="copilot-msg-role">Copilot</div>' +
+  '<div class="copilot-msg-body copilot-md">' +
+  longRendered.html +
+  "</div></div>";
+assert(bubbleShape.includes("copilot-msg-body copilot-md"), "dock assistant body classes present");
+assert(bubbleShape.includes("copilot-md-pre"), "dock bubble nests pre for scroll containment");
+
 for (const kind of struct.activities) {
   assert(
     html.includes("'" + kind + "'") || html.includes('"' + kind + '"'),
