@@ -441,6 +441,47 @@
     return "masked";
   }
 
+  /** localStorage key for left progress/nav sidebar collapse (mirrors copilot). */
+  const SIDEBAR_COLLAPSED_KEY = "sft-course-sidebar-collapsed-v1";
+
+  /** Open-copilot third-track width in px; must match playbook CSS `.app.has-copilot`. */
+  const COPILOT_OPEN_TRACK_PX = 440;
+
+  function parseSidebarCollapsed(stored) {
+    return stored === "1" || stored === true || stored === 1;
+  }
+
+  function sidebarCollapsedStorageValue(collapsed) {
+    return collapsed ? "1" : "0";
+  }
+
+  /**
+   * Class fragments applied when the progress sidebar is collapsed.
+   * @returns {{ appClass: string, sidebarClass: string }}
+   */
+  function sidebarCollapsedDomClasses(collapsed) {
+    return {
+      appClass: collapsed ? "sidebar-collapsed" : "",
+      sidebarClass: collapsed ? "is-collapsed" : "",
+    };
+  }
+
+  /**
+   * Read the third track of a `grid-template-columns` value (open copilot column).
+   * @param {string} gridValue e.g. "360px minmax(0,1fr) 440px"
+   * @returns {number|null} pixel width or null if not a fixed px track
+   */
+  function parseOpenCopilotThirdTrackPx(gridValue) {
+    const parts = String(gridValue || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (parts.length < 3) return null;
+    const last = parts[parts.length - 1];
+    const m = last.match(/^(\d+(?:\.\d+)?)px$/i);
+    return m ? Number(m[1]) : null;
+  }
+
   function buildCourseContext(state, viewMeta, course) {
     const s = ensureState(state, course[0] && course[0].id);
     const view = (viewMeta && viewMeta.view) || "home";
@@ -489,5 +530,11 @@
     validateCourseStructure: validateCourseStructure,
     tokenMaskClass: tokenMaskClass,
     buildCourseContext: buildCourseContext,
+    SIDEBAR_COLLAPSED_KEY: SIDEBAR_COLLAPSED_KEY,
+    COPILOT_OPEN_TRACK_PX: COPILOT_OPEN_TRACK_PX,
+    parseSidebarCollapsed: parseSidebarCollapsed,
+    sidebarCollapsedStorageValue: sidebarCollapsedStorageValue,
+    sidebarCollapsedDomClasses: sidebarCollapsedDomClasses,
+    parseOpenCopilotThirdTrackPx: parseOpenCopilotThirdTrackPx,
   };
 });
