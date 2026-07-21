@@ -26,7 +26,17 @@
     return location.protocol === "http:" || location.protocol === "https:";
   }
 
+  function agui() {
+    return (
+      (typeof window !== "undefined" && window.SFTCourseAgui) ||
+      (typeof globalThis !== "undefined" && globalThis.SFTCourseAgui) ||
+      null
+    );
+  }
+
   function esc(s) {
+    var A = agui();
+    if (A && typeof A.escHtml === "function") return A.escHtml(s);
     return String(s).replace(/[&<>"']/g, function (m) {
       return (
         {
@@ -38,6 +48,37 @@
         }[m] || m
       );
     });
+  }
+
+  /**
+   * Event-driven body HTML for a transcript row.
+   * Prefer AG-UI events when present; otherwise synthesize events from text
+   * so the paint path is never a single opaque string assignment.
+   */
+  function bodyHtmlForMessage(m) {
+    var A = agui();
+    var role = m.role || "user";
+    var text = m.text != null ? String(m.text) : "";
+
+    if (A && role === "assistant") {
+      var events =
+        Array.isArray(m.events) && m.events.length
+          ? m.events
+          : typeof A.textToAguiEvents === "function"
+            ? A.textToAguiEvents(text)
+            : null;
+      if (events && typeof A.renderAssistantFromEvents === "function") {
+        return A.renderAssistantFromEvents(events).html;
+      }
+      if (typeof A.markdownToHtml === "function") {
+        return A.markdownToHtml(text);
+      }
+    }
+
+    if (A && typeof A.renderMessageBodyHtml === "function") {
+      return A.renderMessageBodyHtml(role, text);
+    }
+    return esc(text);
   }
 
   function loadMessages() {
@@ -175,9 +216,17 @@
     }
     els.messages.innerHTML = messages
       .map(function (m) {
-        var role = m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user";
+        var role =
+          m.role === "assistant"
+            ? "assistant"
+            : m.role === "system"
+              ? "system"
+              : "user";
         var label =
           role === "assistant" ? "Copilot" : role === "system" ? "System" : "You";
+        var bodyClass =
+          "copilot-msg-body" +
+          (role === "assistant" ? " copilot-md" : " copilot-msg-body--plain");
         return (
           '<div class="copilot-msg copilot-msg--' +
           role +
@@ -185,8 +234,10 @@
           '<div class="copilot-msg-role">' +
           esc(label) +
           "</div>" +
-          '<div class="copilot-msg-body">' +
-          esc(m.text) +
+          '<div class="' +
+          bodyClass +
+          '">' +
+          bodyHtmlForMessage(m) +
           "</div>" +
           "</div>"
         );
@@ -241,8 +292,26 @@
     }, 1000);
   }
 
-  function pushMessage(role, text) {
-    messages.push({ role: role, text: String(text || ""), ts: Date.now() });
+  function pushMessage(role, text, events) {
+    var entry = {
+      role: role,
+      text: String(text || ""),
+      ts: Date.now(),
+    };
+    if (Array.isArray(events) && events.length) {
+      // Keep a compact event list for re-render; drop large rawEvent blobs if any.
+      entry.events = events.map(function (ev) {
+        if (!ev || typeof ev !== "object") return ev;
+        var copy = {};
+        for (var k in ev) {
+          if (Object.prototype.hasOwnProperty.call(ev, k) && k !== "rawEvent") {
+            copy[k] = ev[k];
+          }
+        }
+        return copy;
+      });
+    }
+    messages.push(entry);
     // Cap transcript growth in localStorage
     if (messages.length > 200) messages = messages.slice(-200);
     saveMessages();
@@ -351,7 +420,11 @@
           (data && data.error) ||
           (res.status ? "HTTP " + res.status : "request failed");
         lastError = err;
-        pushMessage("assistant", "Error: " + err);
+        var errEvents =
+          data && Array.isArray(data.events) && data.events.length
+            ? data.events
+            : null;
+        pushMessage("assistant", "Error: " + err, errEvents);
         setStatus("error");
         return;
       }
@@ -363,8 +436,23 @@
         );
       }
 
-      var reply = data.text != null && String(data.text).trim() ? String(data.text) : "(empty response)";
-      pushMessage("assistant", reply);
+      var events =
+        Array.isArray(data.events) && data.events.length ? data.events : null;
+      var reply = "";
+      if (events && agui() && typeof agui().primaryTextFromEvents === "function") {
+        reply = agui().primaryTextFromEvents(events);
+      }
+      if (!reply || !String(reply).trim()) {
+        reply =
+          data.text != null && String(data.text).trim()
+            ? String(data.text)
+            : "(empty response)";
+      }
+      // Always event-driven: synthesize if gate omitted events (older gate / offline path).
+      if (!events && agui() && typeof agui().textToAguiEvents === "function") {
+        events = agui().textToAguiEvents(reply);
+      }
+      pushMessage("assistant", reply, events);
       setStatus("online");
     } catch (e) {
       lastError = e && e.message ? e.message : String(e);
