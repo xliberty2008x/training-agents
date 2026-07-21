@@ -35,7 +35,20 @@
     .copilot-msg--assistant{background:rgba(0,167,167,.12);border-color:rgba(0,167,167,.28)}
     .copilot-msg--system{background:rgba(255,255,255,.04);color:#c7d0e5}
     .copilot-msg-role{font-size:.72rem;font-weight:850;color:#c7d0e5;margin-bottom:.28rem;text-transform:uppercase;letter-spacing:.04em}
-    .copilot-msg-body{white-space:pre-wrap;word-break:break-word;font-size:.9rem;line-height:1.45}
+    .copilot-msg-body{word-break:break-word;font-size:.9rem;line-height:1.45}
+    .copilot-msg-body--plain{white-space:pre-wrap}
+    .copilot-md{white-space:normal}
+    .copilot-md .copilot-md-h{margin:.15rem 0 .45rem;font-size:1rem;line-height:1.25;letter-spacing:-.02em;color:#f2f6ff}
+    .copilot-md h1.copilot-md-h{font-size:1.12rem}
+    .copilot-md h2.copilot-md-h{font-size:1.02rem}
+    .copilot-md h3.copilot-md-h{font-size:.95rem}
+    .copilot-md .copilot-md-p{margin:.2rem 0 .45rem}
+    .copilot-md .copilot-md-ul,.copilot-md .copilot-md-ol{margin:.25rem 0 .5rem;padding-left:1.15rem}
+    .copilot-md .copilot-md-li{margin:.15rem 0}
+    .copilot-md .copilot-md-pre{margin:.4rem 0 .55rem;padding:.65rem .7rem;border-radius:10px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.1);overflow:auto;font-size:.8rem;line-height:1.4;white-space:pre}
+    .copilot-md .copilot-md-codeblock{color:#e8edfb;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .copilot-md .copilot-md-code{padding:.05rem .28rem;border-radius:5px;background:rgba(255,255,255,.1);font-size:.84em;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .copilot-md strong{font-weight:850;color:#fff}
     .copilot-working{padding:.4rem .9rem;color:#ffd072;font-size:.82rem;font-weight:800;border-top:1px solid rgba(255,255,255,.08)}
     .copilot-offline-help{padding:.65rem .9rem;margin:0 .75rem .5rem;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#e8edfb;font-size:.82rem;line-height:1.4;white-space:pre-wrap}
     .copilot-compose{padding:.75rem .85rem .9rem;border-top:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.18)}
@@ -125,6 +138,7 @@
 </div>
 <script src="sft-course-lib.js"></script>
 <script src="sft-course-data.js"></script>
+<script src="sft-course-agui.js"></script>
 <script src="sft-course-copilot.js"></script>
 <script>
 (function () {

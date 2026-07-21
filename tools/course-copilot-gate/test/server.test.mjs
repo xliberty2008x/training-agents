@@ -124,6 +124,15 @@ test("POST /chat create saves session and returns tutor text", async () => {
     assert.match(String(body.text), /m1l1/);
     assert.equal(typeof body.durationMs, "number");
     assert.equal(body.error, null);
+    assert.ok(Array.isArray(body.events), "chat response includes AG-UI events");
+    const types = body.events.map((e) => e && e.type);
+    assert.ok(types.includes("RUN_STARTED"));
+    assert.ok(types.includes("TEXT_MESSAGE_START"));
+    assert.ok(types.includes("TEXT_MESSAGE_CONTENT"));
+    assert.ok(types.includes("TEXT_MESSAGE_END"));
+    assert.ok(types.includes("RUN_FINISHED"));
+    const content = body.events.find((e) => e.type === "TEXT_MESSAGE_CONTENT");
+    assert.match(String(content.delta), /m1l1/);
 
     const stored = loadSession(root);
     assert.ok(stored);
@@ -254,6 +263,10 @@ test("POST /chat mutex holds during body read (held-body concurrency)", async ()
             },
           );
           req.on("error", reject);
+          // Flush headers immediately so the server handler (and mutex) runs
+          // before the delayed body arrives. Without this, Node may not deliver
+          // the request until write()/end(), collapsing the concurrency window.
+          req.flushHeaders();
           // Hold the body so two handlers would both pass a late mutex if buggy.
           setTimeout(() => {
             req.write(payload);
@@ -262,9 +275,9 @@ test("POST /chat mutex holds during body read (held-body concurrency)", async ()
         });
       }
 
-      const a = postHeldBody(80);
+      const a = postHeldBody(120);
       // Start second while first has acquired mutex but not finished body read.
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise((r) => setTimeout(r, 30));
       const b = postHeldBody(0);
 
       const [ra, rb] = await Promise.all([a, b]);

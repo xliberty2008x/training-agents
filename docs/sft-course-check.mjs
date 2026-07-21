@@ -36,8 +36,33 @@ assert(existsSync(htmlPath), "playbook HTML exists");
 const html = readFileSync(htmlPath, "utf8");
 assert(html.includes('src="sft-course-lib.js"'), "HTML loads sft-course-lib.js");
 assert(html.includes('src="sft-course-data.js"'), "HTML loads sft-course-data.js");
+assert(html.includes('src="sft-course-agui.js"'), "HTML loads AG-UI helpers");
 assert(html.includes('src="sft-course-copilot.js"'), "HTML loads copilot plugin");
 assert(html.includes("SFTCoursePlayer"), "playbook exposes SFTCoursePlayer");
+assert(html.indexOf("sft-course-agui.js") < html.indexOf("sft-course-copilot.js"), "AG-UI loads before copilot");
+
+// AG-UI pure helpers (event map + markdown) ship in docs and are dual-exported
+const aguiPath = join(__dirname, "sft-course-agui.js");
+assert(existsSync(aguiPath), "sft-course-agui.js exists");
+const Agui = require("./sft-course-agui.js");
+assert(typeof Agui.textToAguiEvents === "function", "textToAguiEvents exported");
+assert(typeof Agui.foldAguiEvents === "function", "foldAguiEvents exported");
+assert(typeof Agui.markdownToHtml === "function", "markdownToHtml exported");
+assert(typeof Agui.renderAssistantFromEvents === "function", "renderAssistantFromEvents exported");
+const sampleEvents = Agui.textToAguiEvents("## Head\n\n- a\n\n```\ncode\n```", {
+  messageId: "check-msg",
+  runId: "check-run",
+  timestamp: 1,
+});
+const sampleTypes = sampleEvents.map((e) => e.type);
+assert(sampleTypes.includes("RUN_STARTED"), "events include RUN_STARTED");
+assert(sampleTypes.includes("TEXT_MESSAGE_CONTENT"), "events include TEXT_MESSAGE_CONTENT");
+assert(sampleTypes.includes("RUN_FINISHED"), "events include RUN_FINISHED");
+const rendered = Agui.renderAssistantFromEvents(sampleEvents);
+assert(rendered.html.includes("<h2"), "event path renders markdown heading");
+assert(rendered.html.includes("<ul"), "event path renders markdown list");
+assert(rendered.html.includes("code"), "event path renders fenced code");
+assert(!rendered.html.includes("<script"), "markdown escapes raw HTML");
 
 for (const kind of struct.activities) {
   assert(

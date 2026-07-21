@@ -4,6 +4,10 @@ Local HTTP gate that serves the SFT interactive playbook and backs the optional
 right-dock course copilot. Each chat turn spawns a headless Grok CLI process
 with a single durable session and a read-only tool policy.
 
+Assistant replies are mapped into **[AG-UI](https://docs.ag-ui.com/introduction)**
+events (`RUN_*` + `TEXT_MESSAGE_*`) so the dock can render markdown via an
+event-driven path rather than painting one opaque `text` string.
+
 ## Start
 
 From the repository root:
@@ -61,7 +65,14 @@ questions; reset the session if the thread drifts.
 Default chat timeout is 180s (`CHAT_TIMEOUT_MS`); default max turns is 6
 (`MAX_TURNS`).
 
-## Mock mode (tests / smoke)
+## Mock vs live Grok
+
+| Mode | How | What you get |
+|------|-----|----------------|
+| **Mock** (tests / smoke) | `GROK_BIN=node` + `GROK_EXTRA_ARGS` pointing at `mock-grok.mjs` | Deterministic tutor text; no API cost; full gate HTTP + AG-UI events |
+| **Live** | Install/authenticate Grok CLI; leave `GROK_BIN` unset (or set to `grok`) | Real headless Grok; same `/chat` shape and AG-UI events |
+
+### Mock mode (tests / smoke)
 
 For unit tests and smoke runs without a real Grok binary, point the gate at the
 repo mock CLI via `GROK_BIN` and `GROK_EXTRA_ARGS`:
@@ -90,6 +101,15 @@ Optional mock helpers:
 - `MOCK_SESSION_ID` — fixed session id returned by the mock
 - `MOCK_SLEEP_MS` — artificial latency for timeout/concurrency tests
 
+### Live mode
+
+```bash
+# Requires `grok` on PATH and authenticated host (~/.grok/auth.json typically).
+unset GROK_EXTRA_ARGS
+export GROK_BIN=grok   # optional; this is the default
+node tools/course-copilot-gate/server.mjs
+```
+
 ## Reset
 
 - Course **Reset** (sidebar): clears local course progress and also POSTs
@@ -105,6 +125,33 @@ After reset, the next chat message creates a fresh Grok session.
 |------|-----------|--------------|
 | `file://.../docs/sft-interactive-playbook.html` | Works (progress, quizzes, labs) | Offline — needs gate for API |
 | `http://127.0.0.1:8787/sft-interactive-playbook.html` | Works | Online when gate + Grok (or mock) available |
+
+The course shell (lessons, quizzes, progress) does **not** require the gate.
+Copilot is progressive enhancement: when opened over `file://` or when the gate
+is down, the dock shows offline help and the rest of the playbook stays usable.
+
+## AG-UI reply rendering
+
+`POST /chat` still returns `{ ok, text, ... }` for compatibility and also
+returns an `events` array shaped like AG-UI:
+
+1. `RUN_STARTED`
+2. `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`
+3. `RUN_FINISHED` (or `RUN_ERROR` on failure)
+
+Shared pure helpers live in `docs/sft-course-agui.js` (browser + Node):
+
+- `textToAguiEvents` / `foldAguiEvents` / `primaryTextFromEvents`
+- `markdownToHtml` / `renderAssistantFromEvents`
+
+The dock (`docs/sft-course-copilot.js`) folds events and renders markdown
+(headings, lists, fenced code, inline code/bold). If `events` is missing, the
+client synthesizes them from `text` so the paint path stays event-driven.
+
+Gate re-export for Node tests: `tools/course-copilot-gate/agui.mjs`.
+
+Streaming JSON from headless Grok is out of scope for this change (see issue #8);
+v1 maps the completed JSON blob into the full event lifecycle at once.
 
 ## Verification
 

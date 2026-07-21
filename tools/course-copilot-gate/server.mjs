@@ -7,6 +7,7 @@ import { buildCreatePrompt, buildResumePrompt } from "./prompt.mjs";
 import { loadSession, saveSession, resetSession } from "./session.mjs";
 import { runGrokTurn } from "./grok.mjs";
 import { resolveDocsPath } from "./static.mjs";
+import { textToAguiEvents, errorToAguiEvents } from "./agui.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -191,6 +192,10 @@ export function createServer(options = {}) {
       sendJson(res, 409, {
         ok: false,
         text: null,
+        events: errorToAguiEvents("busy", {
+          includeMessage: false,
+          code: "busy",
+        }),
         sessionId: null,
         reset: false,
         durationMs: 0,
@@ -206,13 +211,18 @@ export function createServer(options = {}) {
       try {
         bodyRaw = await readBody(req);
       } catch (err) {
+        const bodyErr = err.message || "bad body";
         sendJson(res, err.code === "BODY_TOO_LARGE" ? 413 : 400, {
           ok: false,
           text: null,
+          events: errorToAguiEvents(bodyErr, {
+            includeMessage: false,
+            code: err.code || "bad_body",
+          }),
           sessionId: null,
           reset: false,
           durationMs: 0,
-          error: err.message || "bad body",
+          error: bodyErr,
         });
         return;
       }
@@ -224,6 +234,10 @@ export function createServer(options = {}) {
         sendJson(res, 400, {
           ok: false,
           text: null,
+          events: errorToAguiEvents("invalid json", {
+            includeMessage: false,
+            code: "invalid_json",
+          }),
           sessionId: null,
           reset: false,
           durationMs: 0,
@@ -238,6 +252,10 @@ export function createServer(options = {}) {
         sendJson(res, 400, {
           ok: false,
           text: null,
+          events: errorToAguiEvents("empty message", {
+            includeMessage: false,
+            code: "empty_message",
+          }),
           sessionId: null,
           reset: false,
           durationMs: 0,
@@ -316,10 +334,24 @@ export function createServer(options = {}) {
       }
 
       const stored = loadSession(repoRoot);
+      const sessionId =
+        result.sessionId || (stored && stored.sessionId) || null;
+      const threadId = sessionId || "course-copilot";
+      const replyText =
+        result.text != null && String(result.text).trim()
+          ? String(result.text)
+          : result.ok
+            ? ""
+            : result.error || "error";
+      const events = result.ok
+        ? textToAguiEvents(replyText, { threadId })
+        : errorToAguiEvents(replyText, { threadId });
+
       sendJson(res, 200, {
         ok: !!result.ok,
         text: result.text,
-        sessionId: result.sessionId || (stored && stored.sessionId) || null,
+        events,
+        sessionId,
         reset,
         durationMs: result.durationMs,
         error: result.error,
@@ -329,6 +361,9 @@ export function createServer(options = {}) {
       sendJson(res, 500, {
         ok: false,
         text: null,
+        events: errorToAguiEvents(state.lastError, {
+          code: "server_error",
+        }),
         sessionId: null,
         reset,
         durationMs: 0,
