@@ -1,10 +1,19 @@
 /**
  * Course copilot dock plugin — same-origin client for the local gate.
+ * Dual export: browser global `SFTCourseCopilot` and Node `module.exports`
+ * (pure scroll helpers + markup builders are testable without a live gate).
+ * Long pastes become Grok-style chips via sft-course-paste-chips.js (issue #24).
  * Open via gate: http://127.0.0.1:8787/sft-interactive-playbook.html
- *
- * Long pastes become Grok-style chips (see sft-course-paste-chips.js).
  */
-(function () {
+(function (root, factory) {
+  var api = factory();
+  if (typeof module === "object" && module.exports) {
+    module.exports = api;
+  }
+  if (typeof root !== "undefined") {
+    root.SFTCourseCopilot = api;
+  }
+})(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
   var UI_KEY = "sft-course-copilot-ui-v1";
@@ -12,6 +21,21 @@
   var HEALTH_MS = 7000;
   var GATE_URL_HINT =
     "Start the gate, then open: http://127.0.0.1:8787/sft-interactive-playbook.html";
+  var NEAR_EDGE_PX = 48;
+  var SPACER_PAD_PX = 12;
+  var SCROLL_INTENT_MS = 450;
+
+  /*
+   * Scroll modes for the copilot transcript (.copilot-messages):
+   * - follow: auto-scroll policy active; keep the current turn in view.
+   * - history: learner intentionally scrolled up; no forced auto-scroll.
+   * - pin-on-send: on a new user turn, re-enter follow and align that bubble
+   *   near the top of the scrollport (ChatGPT-style), with a bottom spacer
+   *   so there is room to pin while the assistant reply grows.
+   * - Jump to latest: restores follow and returns to the live edge / pin.
+   * Intent is detected from wheel/touch/keyboard, not from layout-only
+   * scroll events caused by content growth or our own scrollTop writes.
+   */
 
   var els = null;
   var player = null;
@@ -23,14 +47,87 @@
   var workStartedAt = 0;
   var unsub = null;
   var lastError = null;
-  /** @type {Array<object>} */
+  /** @type {boolean} when true, auto pin/follow; when false, history mode */
+  var followMode = true;
+  /** pin last user after next render (send / jump / explicit) */
+  var pendingPinUser = false;
+  /** timestamp until which scroll events count as user intent */
+  var scrollIntentUntil = 0;
+  /** @type {Array<object>} Grok-style compose paste chips (issue #24) */
   var composeChips = [];
   /** chipId -> true when expanded in transcript */
   var transcriptExpanded = {};
   /** chipId -> true when expanded in composer */
   var composeExpanded = {};
 
+  // ---------------------------------------------------------------------------
+  // Pure helpers (Node + browser) — drive checks without a live gate
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Index where the "current turn" begins: last user message, or last message
+   * if there is no user turn. Everything from this index is live; before is stale.
+   */
+  function liveStartIndex(msgs) {
+    if (!msgs || !msgs.length) return 0;
+    for (var i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i] && msgs[i].role === "user") return i;
+    }
+    return msgs.length - 1;
+  }
+
+  /** CSS hierarchy class for message at index: live vs stale. */
+  function hierarchyClassForIndex(msgs, index) {
+    if (!msgs || !msgs.length) return "copilot-msg--live";
+    return index >= liveStartIndex(msgs) ? "copilot-msg--live" : "copilot-msg--stale";
+  }
+
+  /**
+   * Bottom spacer so a pinned user bubble can sit near the top of the scrollport.
+   * viewportH / pinH are CSS pixels (clientHeight / offsetHeight).
+   */
+  function computePinSpacerHeight(viewportH, pinH, pad) {
+    if (pad == null) pad = SPACER_PAD_PX;
+    viewportH = Number(viewportH) || 0;
+    pinH = Number(pinH) || 0;
+    return Math.max(0, Math.floor(viewportH - pinH - pad));
+  }
+
+  /**
+   * True when scroll position is within threshold of the live (bottom) edge.
+   */
+  function isNearLiveEdgeMetrics(scrollTop, scrollHeight, clientHeight, threshold) {
+    if (threshold == null) threshold = NEAR_EDGE_PX;
+    scrollTop = Number(scrollTop) || 0;
+    scrollHeight = Number(scrollHeight) || 0;
+    clientHeight = Number(clientHeight) || 0;
+    return scrollHeight - scrollTop - clientHeight <= threshold;
+  }
+
+  /**
+   * After intentional user scroll: leave follow when not near live edge;
+   * re-enter follow when the learner scrolls back to the live edge.
+   * Does not change mode when there was no user intent (programmatic scroll).
+   */
+  function followModeAfterScrollIntent(currentFollow, hadIntent, nearEdge) {
+    if (!hadIntent) return !!currentFollow;
+    return !!nearEdge;
+  }
+
+  function normalizeRole(role) {
+    if (role === "assistant") return "assistant";
+    if (role === "system") return "system";
+    return "user";
+  }
+
+  function roleLabel(role) {
+    if (role === "assistant") return "Copilot";
+    if (role === "system") return "System";
+    return "You";
+  }
+
   function isSupportedOrigin() {
+    if (typeof location === "undefined") return false;
     return location.protocol === "http:" || location.protocol === "https:";
   }
 
@@ -107,6 +204,55 @@
     return esc(text);
   }
 
+  /**
+   * Build full transcript HTML for msgs (shipped markup shape used by renderMessages).
+   * Pure w.r.t. DOM: returns a string with live/stale hierarchy classes.
+   * Does not include the bottom spacer (DOM-only height).
+   */
+  function buildTranscriptHtml(msgs) {
+    if (!msgs || !msgs.length) {
+      return '<div class="copilot-empty">Ask where you are, what to try next, or how a concept maps to the lab scripts. No quiz spoilers.</div>';
+    }
+    var P = pasteChips();
+    return msgs
+      .map(function (m, index) {
+        var role = normalizeRole(m.role);
+        var label = roleLabel(role);
+        var compact =
+          role === "user" &&
+          P &&
+          typeof P.shouldRenderUserMessageCompact === "function" &&
+          P.shouldRenderUserMessageCompact(m);
+        var bodyClass =
+          "copilot-msg-body" +
+          (role === "assistant"
+            ? " copilot-md"
+            : compact
+              ? " copilot-msg-body--user-compact"
+              : " copilot-msg-body--plain");
+        var hierarchy = hierarchyClassForIndex(msgs, index);
+        return (
+          '<div class="copilot-msg copilot-msg--' +
+          role +
+          " " +
+          hierarchy +
+          '" data-msg-index="' +
+          index +
+          '">' +
+          '<div class="copilot-msg-role">' +
+          esc(label) +
+          "</div>" +
+          '<div class="' +
+          bodyClass +
+          '">' +
+          bodyHtmlForMessage(m) +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
   function loadMessages() {
     try {
       var raw = localStorage.getItem(UI_KEY);
@@ -120,6 +266,8 @@
 
   function saveMessages() {
     try {
+      // Persist role/text (+ paste chips when present); AG-UI events are
+      // re-synthesized on render so localStorage does not double-store deltas.
       var P = pasteChips();
       var slim = messages.map(function (m) {
         if (P && typeof P.slimMessageForStorage === "function") {
@@ -130,6 +278,7 @@
       localStorage.setItem(UI_KEY, JSON.stringify(slim));
     } catch (_) {}
   }
+
 
   function loadCollapsed() {
     try {
@@ -171,7 +320,10 @@
       "    </div>" +
       '    <div class="copilot-location" id="copilotLocation">On: —</div>' +
       "  </header>" +
-      '  <div class="copilot-messages" id="copilotMessages" role="log" aria-live="polite"></div>' +
+      '  <div class="copilot-messages-shell">' +
+      '    <div class="copilot-messages" id="copilotMessages" role="log" aria-live="polite" tabindex="0"></div>' +
+      '    <button type="button" class="copilot-jump-latest" id="copilotJumpLatest" hidden aria-label="Jump to latest">Jump to latest</button>' +
+      "  </div>" +
       '  <div class="copilot-working" id="copilotWorking" hidden>Working…</div>' +
       '  <div class="copilot-offline-help" id="copilotOfflineHelp" hidden></div>' +
       '  <footer class="copilot-compose">' +
@@ -195,6 +347,7 @@
       status: root.querySelector("#copilotStatus"),
       location: root.querySelector("#copilotLocation"),
       messages: root.querySelector("#copilotMessages"),
+      jump: root.querySelector("#copilotJumpLatest"),
       working: root.querySelector("#copilotWorking"),
       offlineHelp: root.querySelector("#copilotOfflineHelp"),
       composeChips: root.querySelector("#copilotComposeChips"),
@@ -203,6 +356,56 @@
       clear: root.querySelector("#copilotClear"),
       collapse: root.querySelector("#copilotCollapse"),
       expand: root.querySelector("#copilotExpand"),
+    };
+  }
+
+  function renderComposeChips() {
+    if (!els || !els.composeChips) return;
+    var P = pasteChips();
+    if (!composeChips.length || !P) {
+      els.composeChips.hidden = true;
+      els.composeChips.innerHTML = "";
+      return;
+    }
+    els.composeChips.hidden = false;
+    els.composeChips.innerHTML = composeChips
+      .map(function (chip) {
+        return P.renderPasteChipHtml(chip, {
+          expanded: !!composeExpanded[chip.id],
+          editable: true,
+          escHtml: esc,
+        });
+      })
+      .join("");
+  }
+
+  function clearCompose() {
+    composeChips = [];
+    composeExpanded = {};
+    if (els && els.input) els.input.value = "";
+    renderComposeChips();
+  }
+
+  function hasComposeContent() {
+    var free = els && els.input ? String(els.input.value || "").trim() : "";
+    return !!(free || composeChips.length);
+  }
+
+  /** Assemble free-text + full paste bodies for POST /chat (shipped entry). */
+  function buildOutboundMessage() {
+    var free = els && els.input ? String(els.input.value || "") : "";
+    var P = pasteChips();
+    if (P && typeof P.assembleComposeMessage === "function") {
+      return {
+        freeText: free.trim(),
+        pastes: composeChips.slice(),
+        message: P.assembleComposeMessage(free, composeChips),
+      };
+    }
+    return {
+      freeText: free.trim(),
+      pastes: composeChips.slice(),
+      message: free.trim(),
     };
   }
 
@@ -242,78 +445,160 @@
     els.location.textContent = "On: " + module + " · " + title;
   }
 
-  function renderComposeChips() {
-    if (!els || !els.composeChips) return;
-    var P = pasteChips();
-    if (!composeChips.length || !P) {
-      els.composeChips.hidden = true;
-      els.composeChips.innerHTML = "";
-      return;
-    }
-    els.composeChips.hidden = false;
-    els.composeChips.innerHTML = composeChips
-      .map(function (chip) {
-        return P.renderPasteChipHtml(chip, {
-          expanded: !!composeExpanded[chip.id],
-          editable: true,
-          escHtml: esc,
-        });
-      })
-      .join("");
+  // ---------------------------------------------------------------------------
+  // Scroll policy (DOM)
+  // ---------------------------------------------------------------------------
+
+  function markUserScrollIntent() {
+    scrollIntentUntil = Date.now() + SCROLL_INTENT_MS;
   }
 
-  function clearCompose() {
-    composeChips = [];
-    composeExpanded = {};
-    if (els && els.input) els.input.value = "";
-    renderComposeChips();
+  function hadUserScrollIntent() {
+    return Date.now() < scrollIntentUntil;
+  }
+
+  function setFollowMode(on) {
+    followMode = !!on;
+    updateJumpControl();
+  }
+
+  function updateJumpControl() {
+    if (!els || !els.jump) return;
+    var show = !followMode && messages.length > 0;
+    els.jump.hidden = !show;
+  }
+
+  function isNearLiveEdgeDom() {
+    if (!els || !els.messages) return true;
+    var c = els.messages;
+    return isNearLiveEdgeMetrics(c.scrollTop, c.scrollHeight, c.clientHeight, NEAR_EDGE_PX);
+  }
+
+  function findLastUserBubble() {
+    if (!els || !els.messages) return null;
+    var nodes = els.messages.querySelectorAll(".copilot-msg--user");
+    if (!nodes.length) return null;
+    return nodes[nodes.length - 1];
+  }
+
+  function offsetTopWithin(el, container) {
+    // Distance from container content top to element top.
+    var top = 0;
+    var node = el;
+    while (node && node !== container) {
+      top += node.offsetTop;
+      node = node.offsetParent;
+      // If offsetParent chain leaves the container, fall back to rect math.
+      if (node && !container.contains(node) && node !== container) {
+        var cRect = container.getBoundingClientRect();
+        var eRect = el.getBoundingClientRect();
+        return eRect.top - cRect.top + container.scrollTop;
+      }
+    }
+    if (node === container) return top;
+    var cr = container.getBoundingClientRect();
+    var er = el.getBoundingClientRect();
+    return er.top - cr.top + container.scrollTop;
+  }
+
+  function ensureBottomSpacer(pinEl) {
+    if (!els || !els.messages) return null;
+    var container = els.messages;
+    var spacer = container.querySelector(".copilot-scroll-spacer");
+    if (!spacer) {
+      spacer = document.createElement("div");
+      spacer.className = "copilot-scroll-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      container.appendChild(spacer);
+    }
+    if (pinEl && followMode) {
+      var h = computePinSpacerHeight(container.clientHeight, pinEl.offsetHeight, SPACER_PAD_PX);
+      spacer.style.height = h + "px";
+    } else {
+      spacer.style.height = "0px";
+    }
+    return spacer;
+  }
+
+  function pinElementNearTop(el) {
+    if (!els || !els.messages || !el) return;
+    var container = els.messages;
+    var target = Math.max(0, offsetTopWithin(el, container) - 4);
+    container.scrollTop = target;
+  }
+
+  function scrollToLiveEdge() {
+    if (!els || !els.messages) return;
+    els.messages.scrollTop = els.messages.scrollHeight;
+  }
+
+  /**
+   * Apply follow scroll policy after a structural render.
+   * pinUser: align last user bubble near top (pin-on-send / jump / live follow).
+   */
+  function applyScrollPolicy(opts) {
+    opts = opts || {};
+    if (!els || !els.messages) return;
+    if (!followMode) {
+      // History mode: leave scroll position alone; ensure spacer does not yank.
+      var staleSpacer = els.messages.querySelector(".copilot-scroll-spacer");
+      if (staleSpacer) staleSpacer.style.height = "0px";
+      updateJumpControl();
+      return;
+    }
+
+    var lastUser = findLastUserBubble();
+    if (opts.pinUser && lastUser) {
+      ensureBottomSpacer(lastUser);
+      pinElementNearTop(lastUser);
+    } else if (lastUser) {
+      ensureBottomSpacer(lastUser);
+      pinElementNearTop(lastUser);
+    } else {
+      ensureBottomSpacer(null);
+      scrollToLiveEdge();
+    }
+    updateJumpControl();
+  }
+
+  function jumpToLatest() {
+    setFollowMode(true);
+    pendingPinUser = true;
+    applyScrollPolicy({ pinUser: true });
+    pendingPinUser = false;
+  }
+
+  function onMessagesScroll() {
+    if (!els || !els.messages) return;
+    var intent = hadUserScrollIntent();
+    var near = isNearLiveEdgeDom();
+    var next = followModeAfterScrollIntent(followMode, intent, near);
+    if (next !== followMode) {
+      followMode = next;
+    }
+    updateJumpControl();
   }
 
   function renderMessages() {
     if (!els || !els.messages) return;
-    if (!messages.length) {
-      els.messages.innerHTML =
-        '<div class="copilot-empty">Ask where you are, what to try next, or how a concept maps to the lab scripts. No quiz spoilers.</div>';
-      return;
+    els.messages.innerHTML = buildTranscriptHtml(messages);
+
+    // Structural spacer for pin-on-send room (height applied in applyScrollPolicy).
+    if (messages.length) {
+      var spacer = document.createElement("div");
+      spacer.className = "copilot-scroll-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      spacer.style.height = "0px";
+      els.messages.appendChild(spacer);
     }
-    els.messages.innerHTML = messages
-      .map(function (m) {
-        var role =
-          m.role === "assistant"
-            ? "assistant"
-            : m.role === "system"
-              ? "system"
-              : "user";
-        var label =
-          role === "assistant" ? "Copilot" : role === "system" ? "System" : "You";
-        var compact =
-          role === "user" &&
-          pasteChips() &&
-          pasteChips().shouldRenderUserMessageCompact(m);
-        var bodyClass =
-          "copilot-msg-body" +
-          (role === "assistant"
-            ? " copilot-md"
-            : compact
-              ? " copilot-msg-body--user-compact"
-              : " copilot-msg-body--plain");
-        return (
-          '<div class="copilot-msg copilot-msg--' +
-          role +
-          '">' +
-          '<div class="copilot-msg-role">' +
-          esc(label) +
-          "</div>" +
-          '<div class="' +
-          bodyClass +
-          '">' +
-          bodyHtmlForMessage(m) +
-          "</div>" +
-          "</div>"
-        );
-      })
-      .join("");
-    els.messages.scrollTop = els.messages.scrollHeight;
+
+    if (followMode) {
+      var pin = pendingPinUser || true;
+      applyScrollPolicy({ pinUser: pin });
+      pendingPinUser = false;
+    } else {
+      updateJumpControl();
+    }
   }
 
   function showOfflineHelp(show) {
@@ -325,11 +610,6 @@
       els.offlineHelp.hidden = true;
       els.offlineHelp.textContent = "";
     }
-  }
-
-  function hasComposeContent() {
-    var free = els && els.input ? String(els.input.value || "").trim() : "";
-    return !!(free || composeChips.length);
   }
 
   function setComposeEnabled(enabled) {
@@ -396,6 +676,12 @@
     // Cap transcript growth in localStorage
     if (messages.length > 200) messages = messages.slice(-200);
     saveMessages();
+
+    // pin-on-send: new user turn re-enters follow and pins that bubble.
+    if (role === "user") {
+      setFollowMode(true);
+      pendingPinUser = true;
+    }
     renderMessages();
   }
 
@@ -403,6 +689,8 @@
     messages = [];
     transcriptExpanded = {};
     saveMessages();
+    setFollowMode(true);
+    pendingPinUser = false;
     renderMessages();
   }
 
@@ -450,38 +738,12 @@
     }
   }
 
-  function buildOutboundMessage() {
-    var free = els && els.input ? String(els.input.value || "") : "";
-    var P = pasteChips();
-    if (P && typeof P.assembleComposeMessage === "function") {
-      return {
-        freeText: free.trim(),
-        pastes: composeChips.slice(),
-        message: P.assembleComposeMessage(free, composeChips),
-      };
-    }
-    var joined = free.trim();
-    if (composeChips.length) {
-      var bodies = composeChips
-        .map(function (c) {
-          return c && c.text != null ? String(c.text) : "";
-        })
-        .filter(Boolean);
-      if (bodies.length) {
-        joined = [joined].concat(bodies).filter(Boolean).join("\n\n");
-      }
-    }
-    return {
-      freeText: free.trim(),
-      pastes: composeChips.slice(),
-      message: joined,
-    };
-  }
-
   async function sendMessage() {
     if (!els || inFlight) return;
     if (!isSupportedOrigin()) {
       setStatus("offline");
+      showOfflineHelp(true);
+
       showOfflineHelp(true);
       return;
     }
@@ -595,6 +857,7 @@
     pollHealth();
   }
 
+
   function handleComposerPaste(ev) {
     var P = pasteChips();
     if (!P || typeof P.applyPasteToCompose !== "function") return;
@@ -608,7 +871,6 @@
     }
     if (!pasted) return;
     if (!P.shouldBecomePasteChip(pasted)) {
-      // Let the browser insert short pastes into the textarea normally.
       return;
     }
     ev.preventDefault();
@@ -618,7 +880,6 @@
     if (result.action === "expand" && result.expandedChipId) {
       composeExpanded[result.expandedChipId] = true;
     } else if (result.action === "chip" && result.chip && result.chip.id) {
-      // Keep new chips collapsed by default; free text stays for the short ask.
       composeExpanded[result.chip.id] = false;
     }
     if (els && els.input && result.freeText != null) {
@@ -630,7 +891,7 @@
 
   function onComposeChipsClick(ev) {
     var toggle = ev.target.closest && ev.target.closest(".copilot-paste-chip-toggle");
-    if (!toggle || !els.composeChips.contains(toggle)) return;
+    if (!toggle || !els.composeChips || !els.composeChips.contains(toggle)) return;
     var chipEl = toggle.closest(".copilot-paste-chip");
     if (!chipEl) return;
     var id = chipEl.getAttribute("data-chip-id");
@@ -662,9 +923,9 @@
     setComposeEnabled(true);
   }
 
-  function onMessagesClick(ev) {
+  function onTranscriptChipClick(ev) {
     var toggle = ev.target.closest && ev.target.closest(".copilot-paste-chip-toggle");
-    if (!toggle || !els.messages.contains(toggle)) return;
+    if (!toggle || !els.messages || !els.messages.contains(toggle)) return;
     var chipEl = toggle.closest(".copilot-paste-chip");
     if (!chipEl) return;
     var id = chipEl.getAttribute("data-chip-id");
@@ -693,7 +954,7 @@
       els.composeChips.addEventListener("input", onComposeChipsInput);
     }
     if (els.messages) {
-      els.messages.addEventListener("click", onMessagesClick);
+      els.messages.addEventListener("click", onTranscriptChipClick);
     }
     els.clear.addEventListener("click", function () {
       clearSession();
@@ -704,6 +965,46 @@
     els.expand.addEventListener("click", function () {
       setCollapsed(false);
     });
+
+    if (els.jump) {
+      els.jump.addEventListener("click", function () {
+        jumpToLatest();
+      });
+    }
+
+    if (els.messages) {
+      // Real user intent only (not layout-driven scroll from content growth).
+      els.messages.addEventListener(
+        "wheel",
+        function () {
+          markUserScrollIntent();
+        },
+        { passive: true }
+      );
+      els.messages.addEventListener(
+        "touchmove",
+        function () {
+          markUserScrollIntent();
+        },
+        { passive: true }
+      );
+      els.messages.addEventListener("keydown", function (ev) {
+        var k = ev.key;
+        if (
+          k === "ArrowUp" ||
+          k === "ArrowDown" ||
+          k === "PageUp" ||
+          k === "PageDown" ||
+          k === "Home" ||
+          k === "End" ||
+          k === " " ||
+          k === "Spacebar"
+        ) {
+          markUserScrollIntent();
+        }
+      });
+      els.messages.addEventListener("scroll", onMessagesScroll, { passive: true });
+    }
   }
 
   function startHealthPoll() {
@@ -729,6 +1030,8 @@
     composeChips = [];
     composeExpanded = {};
     transcriptExpanded = {};
+    followMode = true;
+    pendingPinUser = true;
     renderComposeChips();
     renderMessages();
 
@@ -765,8 +1068,46 @@
     setComposeEnabled(true);
   }
 
-  window.SFTCourseCopilot = {
+  /**
+   * Test/debug hooks: simulate modes without network.
+   * Used by scroll-check harness (Node pure path) and optional in-page checks.
+   */
+  function _testApi() {
+    return {
+      liveStartIndex: liveStartIndex,
+      hierarchyClassForIndex: hierarchyClassForIndex,
+      computePinSpacerHeight: computePinSpacerHeight,
+      isNearLiveEdgeMetrics: isNearLiveEdgeMetrics,
+      followModeAfterScrollIntent: followModeAfterScrollIntent,
+      buildTranscriptHtml: buildTranscriptHtml,
+      getFollowMode: function () {
+        return followMode;
+      },
+      setFollowMode: setFollowMode,
+      jumpToLatest: jumpToLatest,
+      markUserScrollIntent: markUserScrollIntent,
+      applyScrollPolicy: applyScrollPolicy,
+      getMessages: function () {
+        return messages.slice();
+      },
+      setMessagesForTest: function (msgs) {
+        messages = Array.isArray(msgs) ? msgs.slice() : [];
+      },
+      renderMessages: renderMessages,
+      pushMessage: pushMessage,
+    };
+  }
+
+  return {
     init: init,
     isSupportedOrigin: isSupportedOrigin,
+    // Pure helpers for automated checks (shipped entry points — not reimplemented in tests)
+    liveStartIndex: liveStartIndex,
+    hierarchyClassForIndex: hierarchyClassForIndex,
+    computePinSpacerHeight: computePinSpacerHeight,
+    isNearLiveEdgeMetrics: isNearLiveEdgeMetrics,
+    followModeAfterScrollIntent: followModeAfterScrollIntent,
+    buildTranscriptHtml: buildTranscriptHtml,
+    _test: _testApi,
   };
-})();
+});

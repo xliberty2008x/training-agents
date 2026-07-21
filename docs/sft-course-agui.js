@@ -284,9 +284,103 @@
     return s;
   }
 
+  /** GFM separator row: pipes + dashes (+ optional colons for alignment). */
+  function isGfmTableSeparator(line) {
+    var s = String(line || "").trim();
+    if (!s || s.indexOf("-") === -1) return false;
+    // Only structural chars allowed; need at least one --- run.
+    if (!/^[\s|:\-]+$/.test(s)) return false;
+    if (!/-{3,}/.test(s)) return false;
+    // Prefer pipe-delimited forms; allow a bare --- line only with pipes present.
+    return s.indexOf("|") !== -1;
+  }
+
+  /** Header/body row: contains a pipe and is not a separator. */
+  function isGfmTableRow(line) {
+    var s = String(line || "").trim();
+    if (!s || s.indexOf("|") === -1) return false;
+    return !isGfmTableSeparator(s);
+  }
+
   /**
-   * Minimal safe markdown → HTML (headings, lists, fenced code, inline code/bold).
-   * Does not support raw HTML passthrough.
+   * Split a pipe row into cell strings (trims; drops empty edge cells from outer |).
+   */
+  function splitGfmTableCells(line) {
+    var s = String(line || "").trim();
+    if (s.charAt(0) === "|") s = s.slice(1);
+    if (s.charAt(s.length - 1) === "|") s = s.slice(0, -1);
+    return s.split("|").map(function (c) {
+      return c.trim();
+    });
+  }
+
+  function cellInlineHtml(text) {
+    return inlineMd(escHtml(text == null ? "" : String(text)));
+  }
+
+  /**
+   * If `lines` is a full GFM pipe table (header + separator + optional body),
+   * return HTML; otherwise null. No raw HTML passthrough — cells are escaped
+   * then run through inlineMd (bold/code/italic), same as paragraph text.
+   */
+  function tryGfmTableHtml(lines) {
+    if (!lines || lines.length < 2) return null;
+    if (!isGfmTableRow(lines[0]) || !isGfmTableSeparator(lines[1])) return null;
+
+    var bodyLines = [];
+    for (var i = 2; i < lines.length; i++) {
+      var ln = lines[i];
+      if (!String(ln || "").trim()) continue;
+      if (isGfmTableSeparator(ln)) continue;
+      if (!isGfmTableRow(ln)) return null;
+      bodyLines.push(ln);
+    }
+
+    var headers = splitGfmTableCells(lines[0]);
+    if (!headers.length) return null;
+
+    var thead =
+      "<thead><tr>" +
+      headers
+        .map(function (h) {
+          return '<th class="copilot-md-th">' + cellInlineHtml(h) + "</th>";
+        })
+        .join("") +
+      "</tr></thead>";
+
+    var tbodyRows = bodyLines.map(function (rowLine) {
+      var cells = splitGfmTableCells(rowLine);
+      // Pad/truncate to header width for stable columns.
+      while (cells.length < headers.length) cells.push("");
+      if (cells.length > headers.length) cells = cells.slice(0, headers.length);
+      return (
+        "<tr>" +
+        cells
+          .map(function (c) {
+            return '<td class="copilot-md-td">' + cellInlineHtml(c) + "</td>";
+          })
+          .join("") +
+        "</tr>"
+      );
+    });
+
+    var tbody =
+      tbodyRows.length > 0
+        ? "<tbody>" + tbodyRows.join("") + "</tbody>"
+        : "<tbody></tbody>";
+
+    return (
+      '<div class="copilot-md-table-wrap">' +
+      '<table class="copilot-md-table">' +
+      thead +
+      tbody +
+      "</table></div>"
+    );
+  }
+
+  /**
+   * Minimal safe markdown → HTML (headings, lists, fenced code, GFM pipe tables,
+   * inline code/bold). Does not support raw HTML passthrough.
    */
   function markdownToHtml(md) {
     var src = md == null ? "" : String(md);
@@ -340,6 +434,12 @@
             level +
             ">"
         );
+        continue;
+      }
+
+      var tableHtml = tryGfmTableHtml(lines);
+      if (tableHtml) {
+        html.push(tableHtml);
         continue;
       }
 
