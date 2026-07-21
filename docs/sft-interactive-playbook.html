@@ -95,6 +95,14 @@
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
   const KEY = 'sft-course-player-v3';
   let state = load();
+  let currentView = "home"; // home | lesson | capstone
+  const playerListeners = [];
+  function notifyPlayer() {
+    if (!window.SFTCoursePlayer) return;
+    playerListeners.forEach((fn) => {
+      try { fn(window.SFTCoursePlayer.getContext()); } catch (e) { console.warn(e); }
+    });
+  }
 
   function load() {
     try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { return {}; }
@@ -183,11 +191,13 @@
     if (!el) el = $('#lesson-' + COURSE[0].id);
     el.classList.add('active');
     state.last = id === 'capstone' ? 'capstone' : id;
+    currentView = id === 'capstone' ? 'capstone' : 'lesson';
     save();
     const meta = COURSE.find(l => l.id === id);
     $('#toolbarTitle').textContent = id === 'capstone' ? 'Final Project' : (meta.module + ' · ' + meta.title);
     $$('.lesson-link').forEach(b => b.classList.toggle('active', b.dataset.goto === id));
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    notifyPlayer();
   }
   function initPersistence() {
     ensure();
@@ -212,6 +222,7 @@
       state.last = b.dataset.complete;
       save();
       updateProgress();
+      notifyPlayer();
       b.textContent = 'Completed ✓';
     }));
   }
@@ -229,6 +240,7 @@
           state.quiz[q.dataset.quiz] = true;
           save();
           updateProgress();
+          notifyPlayer();
         }
       }));
     });
@@ -326,12 +338,34 @@
     };
     $('#resetBtn').onclick = () => {
       if (confirm('Reset local course progress?')) {
-        localStorage.removeItem(KEY);
-        location.reload();
+        window.SFTCoursePlayer.resetProgressAndCopilot();
       }
     };
     $('#printBtn').onclick = () => window.print();
   }
+  window.SFTCoursePlayer = {
+    getState() { return JSON.parse(JSON.stringify(state)); },
+    getContext() {
+      return Lib.buildCourseContext(state, {
+        view: currentView,
+        lessonId: state.last || null,
+      }, COURSE);
+    },
+    subscribe(fn) {
+      playerListeners.push(fn);
+      return () => {
+        const i = playerListeners.indexOf(fn);
+        if (i >= 0) playerListeners.splice(i, 1);
+      };
+    },
+    async resetProgressAndCopilot() {
+      localStorage.removeItem(KEY);
+      localStorage.removeItem("sft-course-copilot-ui-v1");
+      try { await fetch("/session/reset", { method: "POST" }); } catch (_) {}
+      location.reload();
+    },
+  };
+
   document.addEventListener('DOMContentLoaded', () => {
     const struct = Lib.validateCourseStructure(COURSE);
     if (!struct.ok) console.error('Course structure errors', struct.errors);
