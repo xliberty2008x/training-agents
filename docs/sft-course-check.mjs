@@ -36,6 +36,8 @@ assert(existsSync(htmlPath), "playbook HTML exists");
 const html = readFileSync(htmlPath, "utf8");
 assert(html.includes('src="sft-course-lib.js"'), "HTML loads sft-course-lib.js");
 assert(html.includes('src="sft-course-data.js"'), "HTML loads sft-course-data.js");
+assert(html.includes('src="sft-course-copilot.js"'), "HTML loads copilot plugin");
+assert(html.includes("SFTCoursePlayer"), "playbook exposes SFTCoursePlayer");
 
 for (const kind of struct.activities) {
   assert(
@@ -132,6 +134,21 @@ assert(report.includes("- o1: note"), "report includes notes");
 const scoreTxt = Lib.interpretScoreDelta(5, 6.5, -0.5);
 assert(scoreTxt.includes("Average delta: 1.5"), "score delta text");
 assert(scoreTxt.includes("OOD"), "OOD regression mentioned");
+
+assert(typeof Lib.buildCourseContext === "function", "buildCourseContext exported");
+const ctx = Lib.buildCourseContext(
+  { completed: { o1: true, m1l1: true }, quiz: {}, notes: {}, activities: {}, capstone: {}, last: "m1l1" },
+  { view: "lesson", lessonId: "m1l1" },
+  COURSE
+);
+assert(ctx.course === "sft-interactive-playbook", "context course id");
+assert(ctx.view === "lesson", "context view");
+assert(ctx.lessonId === "m1l1", "context lessonId");
+assert(ctx.module && ctx.lessonTitle, "context has module and title");
+assert(ctx.progress.completedCount === 2, "completedCount");
+assert(ctx.progress.totalLessons === Lib.lessonCount(COURSE), "totalLessons");
+assert(Array.isArray(ctx.progress.completedIds) && ctx.progress.completedIds.includes("o1"), "completedIds");
+assert(ctx.capstoneComplete === false, "capstoneComplete false");
 
 // Cross-check train script flags
 const trainPy = readFileSync(
