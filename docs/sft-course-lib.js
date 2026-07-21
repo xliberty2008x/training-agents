@@ -441,6 +441,35 @@
     return "masked";
   }
 
+  function buildCourseContext(state, viewMeta, course) {
+    const s = ensureState(state, course[0] && course[0].id);
+    const view = (viewMeta && viewMeta.view) || "home";
+    const lessonId = viewMeta && viewMeta.lessonId != null ? viewMeta.lessonId : null;
+    const lesson =
+      lessonId && lessonId !== "capstone"
+        ? course.find(function (l) { return l.id === lessonId; })
+        : null;
+    const completedIds = Object.keys(s.completed || {}).filter(function (id) {
+      return s.completed[id];
+    });
+    const total = lessonCount(course);
+    const done = completedCount(s);
+    return {
+      course: "sft-interactive-playbook",
+      view: view,
+      lessonId: lessonId,
+      module: view === "capstone" ? "Final Project" : lesson ? lesson.module : null,
+      lessonTitle: view === "capstone" ? "Capstone report builder" : lesson ? lesson.title : null,
+      progress: {
+        completedCount: done,
+        totalLessons: total,
+        percent: progressPercent(s, course),
+        completedIds: completedIds,
+      },
+      capstoneComplete: !!s.completed.capstone,
+    };
+  }
+
   return {
     REQUIRED_LESSON_KEYS: REQUIRED_LESSON_KEYS,
     CHOICE_ONLY_ACTIVITIES: CHOICE_ONLY_ACTIVITIES,
@@ -459,5 +488,6 @@
     buildReportText: buildReportText,
     validateCourseStructure: validateCourseStructure,
     tokenMaskClass: tokenMaskClass,
+    buildCourseContext: buildCourseContext,
   };
 });
