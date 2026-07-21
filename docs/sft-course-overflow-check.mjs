@@ -126,9 +126,18 @@ const out = Agui.renderAssistantFromEvents(events);
 assert(typeof out.html === "string" && out.html.length > 0, "renderAssistantFromEvents produced html");
 assert(out.html.includes('class="copilot-md-pre"'), "fence → .copilot-md-pre (overflow-x:auto in CSS)");
 assert(out.html.includes('class="copilot-md-p"'), "prose → .copilot-md-p (overflow-wrap in CSS)");
-assert(out.html.includes("| Mode | What is a target?"), "pipe-table lines present in markup");
+assert(
+  out.html.includes('class="copilot-md-table"') && out.html.includes("<th") && out.html.includes("Mode"),
+  "pipe-table renders as HTML table with headers"
+);
+assert(
+  out.html.includes("| Mode | What is a target?"),
+  "pipe-table source string still present inside fenced code (not only as raw table body)"
+);
 assert(out.html.includes("only_on_tokens_the_model_must_learn"), "long token present for wrap CSS");
 assert(out.html.includes("https://example.com/very/long/path"), "long URL in pre content");
+// Wide tables get overflow-safe wrapper class (CSS in playbook)
+assert(out.html.includes("copilot-md-table-wrap"), "table wrapped for horizontal scroll");
 
 // Mental-model diagram (screenshot regression): full lines present; CSS pre-wrap reflows them
 const mental = [

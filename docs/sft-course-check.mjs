@@ -71,6 +71,62 @@ assert(rendered.html.includes("<ul"), "event path renders markdown list");
 assert(rendered.html.includes("code"), "event path renders fenced code");
 assert(!rendered.html.includes("<script"), "markdown escapes raw HTML");
 
+// #26 GFM pipe tables via shipped markdownToHtml (screenshot-style fixture)
+const tableFixture = [
+  "## What the demo is showing",
+  "",
+  'In that "Try it" widget:',
+  "",
+  "| Mode | What is a target? | Meaning |",
+  "|------|-------------------|--------|",
+  '| **Assistant-only** | Only the assistant span | "Learn to write this reply given the chat so far." User text is ignored for the loss. |',
+  "| **Completion-only** | Only the completion side of a prompt/completion pair | Same idea, different data shape. |",
+  "",
+  "| Unsafe | Note |",
+  "|--------|------|",
+  "| <script>alert(1)</script> | still escaped |",
+].join("\n");
+const tableHtml = Agui.markdownToHtml(tableFixture);
+assert(tableHtml.includes("<table"), "GFM table emits <table>");
+assert(tableHtml.includes('class="copilot-md-table"'), "GFM table uses copilot-md-table class");
+assert(tableHtml.includes("<th"), "GFM table emits <th> headers");
+assert(tableHtml.includes("<td"), "GFM table emits <td> cells");
+assert(tableHtml.includes("Mode"), "table header Mode present");
+assert(tableHtml.includes("What is a target?"), "table header target column present");
+assert(tableHtml.includes("Meaning"), "table header Meaning present");
+assert(tableHtml.includes("Assistant-only"), "Assistant-only row present");
+assert(tableHtml.includes("Completion-only"), "Completion-only row present");
+assert(
+  tableHtml.includes("<strong>Assistant-only</strong>"),
+  "bold inside table cell becomes <strong>"
+);
+assert(
+  !/\|-{3,}/.test(tableHtml) && !tableHtml.includes("|------|"),
+  "separator row is not left as raw body text"
+);
+assert(
+  tableHtml.includes("&lt;script&gt;") || tableHtml.includes("&lt;script"),
+  "script tags in cells are HTML-escaped"
+);
+assert(
+  !/<script[\s>]/.test(tableHtml),
+  "no live <script> tag from table cell content"
+);
+// Existing features still work in the same pass
+assert(tableHtml.includes("<h2"), "heading still works alongside tables");
+const tableViaEvents = Agui.renderAssistantFromEvents(
+  Agui.textToAguiEvents(tableFixture, { messageId: "tbl", runId: "r", timestamp: 1 })
+);
+assert(tableViaEvents.html.includes("<table"), "event path also renders GFM tables");
+assert(
+  html.includes("copilot-md-table"),
+  "playbook CSS includes table rules for dock theme"
+);
+assert(
+  html.includes("copilot-md-table-wrap"),
+  "playbook CSS includes overflow-safe table wrapper"
+);
+
 // #24 paste chips: pure helpers + structural wiring (shipped module, not reimplemented)
 const pastePath = join(__dirname, "sft-course-paste-chips.js");
 assert(existsSync(pastePath), "sft-course-paste-chips.js exists");
@@ -153,10 +209,14 @@ assert(copilotSrc.includes("pastes"), "copilot persists pastes on user turns");
 
 // #18 dock overflow containment: assert shipped CSS (not a re-implemented sheet)
 function cssRuleHas(selectorSnippet, propSnippets) {
-  // Find a rule block that mentions the selector, then require each property snippet.
+  // Prefer exact selector start (snippet ending in `{`) so `.copilot-messages` does
+  // not match `.copilot-messages-shell` first after the scroll shell was added (#25).
   const idx = html.indexOf(selectorSnippet);
   if (idx < 0) return false;
-  const brace = html.indexOf("{", idx);
+  const brace =
+    selectorSnippet.includes("{")
+      ? idx + selectorSnippet.indexOf("{")
+      : html.indexOf("{", idx);
   if (brace < 0 || brace - idx > 120) return false;
   const end = html.indexOf("}", brace);
   if (end < 0) return false;
@@ -164,7 +224,7 @@ function cssRuleHas(selectorSnippet, propSnippets) {
   return propSnippets.every((p) => body.includes(p));
 }
 assert(
-  cssRuleHas(".copilot-messages", ["minmax(0,1fr)", "min-width:0", "overflow-x:auto", "overflow-y:auto"]),
+  cssRuleHas(".copilot-messages{", ["minmax(0,1fr)", "min-width:0", "overflow-x:auto", "overflow-y:auto"]),
   "copilot-messages grid/overflow containment"
 );
 assert(
@@ -212,7 +272,14 @@ const longRendered = Agui.renderAssistantFromEvents(
 );
 assert(longRendered.html.includes('class="copilot-md-pre"'), "fixture fence uses overflow-safe pre class");
 assert(longRendered.html.includes('class="copilot-md-p"'), "fixture prose uses md paragraph");
-assert(longRendered.html.includes("| Mode | What is a target?"), "fixture keeps pipe-table text");
+assert(
+  longRendered.html.includes('class="copilot-md-table"') &&
+    longRendered.html.includes("<th") &&
+    longRendered.html.includes("Mode") &&
+    longRendered.html.includes("What is a target?"),
+  "fixture renders pipe-table as HTML table (not raw pipes)"
+);
+assert(!longRendered.html.includes("|------|"), "fixture does not leave separator as body text");
 assert(longRendered.html.includes("tokens_the_model_must_learn"), "fixture keeps long token for wrap CSS");
 // Markup shape the dock uses for assistant bodies
 const bubbleShape =
