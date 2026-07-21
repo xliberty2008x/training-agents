@@ -186,6 +186,7 @@ export function createServer(options = {}) {
   }
 
   async function handleChat(req, res) {
+    // Acquire mutex immediately so concurrent body-reads cannot both enter Grok.
     if (state.busy) {
       sendJson(res, 409, {
         ok: false,
@@ -197,72 +198,72 @@ export function createServer(options = {}) {
       });
       return;
     }
-
-    let bodyRaw;
-    try {
-      bodyRaw = await readBody(req);
-    } catch (err) {
-      sendJson(res, err.code === "BODY_TOO_LARGE" ? 413 : 400, {
-        ok: false,
-        text: null,
-        sessionId: null,
-        reset: false,
-        durationMs: 0,
-        error: err.message || "bad body",
-      });
-      return;
-    }
-
-    let parsed;
-    try {
-      parsed = bodyRaw ? JSON.parse(bodyRaw) : {};
-    } catch {
-      sendJson(res, 400, {
-        ok: false,
-        text: null,
-        sessionId: null,
-        reset: false,
-        durationMs: 0,
-        error: "invalid json",
-      });
-      return;
-    }
-
-    const message = parsed && parsed.message != null ? String(parsed.message) : "";
-    if (!message.trim()) {
-      sendJson(res, 400, {
-        ok: false,
-        text: null,
-        sessionId: null,
-        reset: false,
-        durationMs: 0,
-        error: "empty message",
-      });
-      return;
-    }
-
-    const context =
-      parsed && parsed.context && typeof parsed.context === "object"
-        ? parsed.context
-        : {
-            course: "sft-interactive-playbook",
-            view: "home",
-            lessonId: null,
-            module: null,
-            lessonTitle: null,
-            progress: {
-              completedCount: 0,
-              totalLessons: 0,
-              percent: 0,
-              completedIds: [],
-            },
-            capstoneComplete: false,
-          };
-
     state.busy = true;
-    let reset = false;
 
+    let reset = false;
     try {
+      let bodyRaw;
+      try {
+        bodyRaw = await readBody(req);
+      } catch (err) {
+        sendJson(res, err.code === "BODY_TOO_LARGE" ? 413 : 400, {
+          ok: false,
+          text: null,
+          sessionId: null,
+          reset: false,
+          durationMs: 0,
+          error: err.message || "bad body",
+        });
+        return;
+      }
+
+      let parsed;
+      try {
+        parsed = bodyRaw ? JSON.parse(bodyRaw) : {};
+      } catch {
+        sendJson(res, 400, {
+          ok: false,
+          text: null,
+          sessionId: null,
+          reset: false,
+          durationMs: 0,
+          error: "invalid json",
+        });
+        return;
+      }
+
+      const message =
+        parsed && parsed.message != null ? String(parsed.message) : "";
+      if (!message.trim()) {
+        sendJson(res, 400, {
+          ok: false,
+          text: null,
+          sessionId: null,
+          reset: false,
+          durationMs: 0,
+          error: "empty message",
+        });
+        return;
+      }
+
+      const context =
+        parsed && parsed.context && typeof parsed.context === "object"
+          ? parsed.context
+          : {
+              course: "sft-interactive-playbook",
+              view: "home",
+              lessonId: null,
+              module: null,
+              lessonTitle: null,
+              progress: {
+                completedCount: 0,
+                totalLessons: 0,
+                percent: 0,
+                completedIds: [],
+              },
+              capstoneComplete: false,
+            };
+
       let session = loadSession(repoRoot);
       let isCreate = !session || !session.sessionId;
 
@@ -290,7 +291,9 @@ export function createServer(options = {}) {
         !result.ok &&
         !isCreate &&
         result.error &&
-        /session|not found|unknown|invalid session|no such/i.test(String(result.error))
+        /session|not found|unknown|invalid session|no such/i.test(
+          String(result.error),
+        )
       ) {
         resetSession(repoRoot);
         session = null;
@@ -307,8 +310,7 @@ export function createServer(options = {}) {
           sessionId: result.sessionId,
           createdAt: new Date().toISOString(),
           cwd: repoRoot,
-          course:
-            (context && context.course) || "sft-interactive-playbook",
+          course: (context && context.course) || "sft-interactive-playbook",
           rulesBootstrapped: true,
         });
       }
@@ -317,8 +319,7 @@ export function createServer(options = {}) {
       sendJson(res, 200, {
         ok: !!result.ok,
         text: result.text,
-        sessionId:
-          result.sessionId || (stored && stored.sessionId) || null,
+        sessionId: result.sessionId || (stored && stored.sessionId) || null,
         reset,
         durationMs: result.durationMs,
         error: result.error,

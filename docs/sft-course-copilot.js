@@ -271,6 +271,17 @@
         return;
       }
       var data = await res.json();
+      if (data && data.binary === false) {
+        setStatus("error");
+        showOfflineHelp(true);
+        if (els && els.offlineHelp) {
+          els.offlineHelp.hidden = false;
+          els.offlineHelp.textContent =
+            "Grok binary not found on the gate host. Install/authenticate Grok, or set GROK_BIN.";
+        }
+        setComposeEnabled(false);
+        return;
+      }
       showOfflineHelp(false);
       if (inFlight || (data && data.busy)) {
         setStatus("busy");
@@ -343,6 +354,13 @@
         pushMessage("assistant", "Error: " + err);
         setStatus("error");
         return;
+      }
+
+      if (data.reset) {
+        pushMessage(
+          "system",
+          "Session was invalid and was recreated. Continuing with a fresh Grok session."
+        );
       }
 
       var reply = data.text != null && String(data.text).trim() ? String(data.text) : "(empty response)";

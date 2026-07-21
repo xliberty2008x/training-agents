@@ -24,7 +24,10 @@ http://127.0.0.1:8787/sft-interactive-playbook.html
 
 The playbook HTML/JS is also usable over `file://` for reading and local
 progress. The copilot dock needs the gate URL so it can call `/health`,
-`/session`, `/chat`, and `/session/reset`.
+`/status`, `/chat`, and `/session/reset`.
+
+Optional `GATE_TOKEN` header auth from the design spec is **not implemented in
+v1** (localhost trust only).
 
 ## Durable session
 

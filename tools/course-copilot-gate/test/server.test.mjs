@@ -194,6 +194,88 @@ test("POST /chat concurrent second request gets 409", async () => {
   );
 });
 
+test("POST /chat mutex holds during body read (held-body concurrency)", async () => {
+  const http = await import("node:http");
+  const root = tempRepoRoot();
+  resetSession(root);
+  await withServer(
+    {
+      repoRoot: root,
+      grokEnv: { ...process.env, MOCK_SLEEP_MS: "0" },
+      chatTimeoutMs: 10_000,
+    },
+    async ({ base, port }) => {
+      const payload = Buffer.from(
+        JSON.stringify({
+          message: "held body",
+          context: {
+            course: "sft-interactive-playbook",
+            view: "home",
+            lessonId: null,
+            module: null,
+            lessonTitle: null,
+            progress: {
+              completedCount: 0,
+              totalLessons: 21,
+              percent: 0,
+              completedIds: [],
+            },
+            capstoneComplete: false,
+          },
+        }),
+      );
+
+      function postHeldBody(delayMs) {
+        return new Promise((resolve, reject) => {
+          const req = http.request(
+            {
+              hostname: "127.0.0.1",
+              port,
+              path: "/chat",
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "content-length": payload.length,
+              },
+            },
+            (res) => {
+              const chunks = [];
+              res.on("data", (c) => chunks.push(c));
+              res.on("end", () => {
+                const text = Buffer.concat(chunks).toString("utf8");
+                let body = null;
+                try {
+                  body = JSON.parse(text);
+                } catch {
+                  body = text;
+                }
+                resolve({ status: res.statusCode, body });
+              });
+            },
+          );
+          req.on("error", reject);
+          // Hold the body so two handlers would both pass a late mutex if buggy.
+          setTimeout(() => {
+            req.write(payload);
+            req.end();
+          }, delayMs);
+        });
+      }
+
+      const a = postHeldBody(80);
+      // Start second while first has acquired mutex but not finished body read.
+      await new Promise((r) => setTimeout(r, 20));
+      const b = postHeldBody(0);
+
+      const [ra, rb] = await Promise.all([a, b]);
+      const statuses = [ra.status, rb.status].sort();
+      assert.deepEqual(statuses, [200, 409]);
+      const busy = [ra, rb].find((r) => r.status === 409);
+      assert.match(String(busy.body.error || ""), /busy/i);
+    },
+  );
+});
+
 test("POST /session/reset clears store", async () => {
   const root = tempRepoRoot();
   await withServer({ repoRoot: root }, async ({ base }) => {
