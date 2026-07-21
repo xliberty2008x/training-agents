@@ -27,7 +27,10 @@ directories or separate project repositories.
 - `docs/sft-interactive-playbook.html`: standalone interactive SFT course (21
   lessons + capstone) with progress bars, quizzes, labs, Module 7 on tasking
   agentic copilots, and a capstone report builder. Loads `sft-course-lib.js` +
-  `sft-course-data.js` from the same folder (`file://` works).
+  `sft-course-data.js` from the same folder (`file://` works). Optional
+  right-dock copilot when served via the local course copilot gate.
+- `tools/course-copilot-gate/README.md`: local gate for the playbook copilot
+  (start command, session path, read-only tools, mock mode, cost/latency notes).
 - `docs/sft-course-check.mjs`: structural + pure-logic verification for the course.
 - `docs/sft-course-e2e.mjs`: Playwright UI e2e (progress, quiz, activity, persistence).
 - `docs/looping-rl.md`: blog post on loop-shaped reinforcement learning for
