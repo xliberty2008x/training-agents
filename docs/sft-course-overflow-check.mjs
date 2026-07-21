@@ -50,7 +50,7 @@ function requireProps(selector, props, label) {
 // --- Shipped CSS containment chain (real file, not reimplemented) ---
 requireProps(
   ".copilot-messages{",
-  ["minmax(0,1fr)", "min-width:0", "overflow-x:hidden", "overflow-y:auto"],
+  ["minmax(0,1fr)", "min-width:0", "overflow-x:auto", "overflow-y:auto"],
   "messages grid"
 );
 requireProps(
@@ -70,8 +70,26 @@ requireProps(
 );
 requireProps(
   ".copilot-md-pre{",
-  ["max-width:100%", "min-width:0", "overflow-x:auto", "white-space:pre"],
+  [
+    "max-width:100%",
+    "min-width:0",
+    "overflow-x:auto",
+    "white-space:pre-wrap",
+    "overflow-wrap:anywhere",
+    "word-break:break-word",
+  ],
   "pre"
+);
+const codeBlockRule = ruleBody(".copilot-md-codeblock{");
+assert(
+  codeBlockRule &&
+    codeBlockRule.includes("white-space:pre-wrap") &&
+    codeBlockRule.includes("overflow-wrap:anywhere"),
+  "codeblock wraps long mono lines (not word-break:normal only)"
+);
+assert(
+  !codeBlockRule || !/word-break\s*:\s*normal/.test(codeBlockRule),
+  "codeblock no longer forces word-break:normal (clips narrow dock)"
 );
 requireProps(".copilot-panel{", ["min-width:0", "overflow:hidden"], "panel");
 requireProps(".copilot-compose{", ["min-width:0"], "compose usable width");
@@ -111,6 +129,25 @@ assert(out.html.includes('class="copilot-md-p"'), "prose → .copilot-md-p (over
 assert(out.html.includes("| Mode | What is a target?"), "pipe-table lines present in markup");
 assert(out.html.includes("only_on_tokens_the_model_must_learn"), "long token present for wrap CSS");
 assert(out.html.includes("https://example.com/very/long/path"), "long URL in pre content");
+
+// Mental-model diagram (screenshot regression): full lines present; CSS pre-wrap reflows them
+const mental = [
+  "## Mental model",
+  "",
+  "Think of each example as:",
+  "",
+  "```",
+  "[context tokens] → model sees these",
+  "[target tokens] → model is graded only on predicting these",
+  "```",
+].join("\n");
+const mentalHtml = Agui.markdownToHtml(mental);
+assert(mentalHtml.includes("[context tokens] → model sees these"), "mental-model context line complete in HTML");
+assert(
+  mentalHtml.includes("[target tokens] → model is graded only on predicting these"),
+  "mental-model target line complete in HTML (not mid-word clip in source)"
+);
+assert(mentalHtml.includes('class="copilot-md-pre"'), "mental-model uses wrap-safe pre class");
 
 // Dock markup shape from sft-course-copilot.js renderMessages path
 const dockBubble =

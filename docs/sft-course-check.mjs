@@ -77,8 +77,16 @@ function cssRuleHas(selectorSnippet, propSnippets) {
   return propSnippets.every((p) => body.includes(p));
 }
 assert(
-  cssRuleHas(".copilot-messages", ["minmax(0,1fr)", "min-width:0", "overflow-x:hidden", "overflow-y:auto"]),
+  cssRuleHas(".copilot-messages", ["minmax(0,1fr)", "min-width:0", "overflow-x:auto", "overflow-y:auto"]),
   "copilot-messages grid/overflow containment"
+);
+assert(
+  cssRuleHas(".copilot-md-pre{", ["white-space:pre-wrap", "overflow-wrap:anywhere", "word-break:break-word"]),
+  "copilot-md-pre reflows long mono lines (pre-wrap)"
+);
+assert(
+  cssRuleHas(".copilot-md-codeblock{", ["white-space:pre-wrap", "overflow-wrap:anywhere"]),
+  "codeblock wraps instead of clipping"
 );
 assert(
   cssRuleHas(".copilot-msg{", ["min-width:0", "max-width:100%", "overflow-wrap:anywhere"]),
