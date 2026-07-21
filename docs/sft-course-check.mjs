@@ -36,6 +36,7 @@ assert(existsSync(htmlPath), "playbook HTML exists");
 const html = readFileSync(htmlPath, "utf8");
 assert(html.includes('src="sft-course-lib.js"'), "HTML loads sft-course-lib.js");
 assert(html.includes('src="sft-course-data.js"'), "HTML loads sft-course-data.js");
+assert(html.includes('src="sft-course-copilot.js"'), "HTML loads copilot plugin");
 assert(html.includes("SFTCoursePlayer"), "playbook exposes SFTCoursePlayer");
 
 for (const kind of struct.activities) {
