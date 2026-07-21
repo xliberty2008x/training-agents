@@ -1,6 +1,8 @@
 /**
  * Course copilot dock plugin — same-origin client for the local gate.
  * Open via gate: http://127.0.0.1:8787/sft-interactive-playbook.html
+ *
+ * Long pastes become Grok-style chips (see sft-course-paste-chips.js).
  */
 (function () {
   "use strict";
@@ -21,6 +23,12 @@
   var workStartedAt = 0;
   var unsub = null;
   var lastError = null;
+  /** @type {Array<object>} */
+  var composeChips = [];
+  /** chipId -> true when expanded in transcript */
+  var transcriptExpanded = {};
+  /** chipId -> true when expanded in composer */
+  var composeExpanded = {};
 
   function isSupportedOrigin() {
     return location.protocol === "http:" || location.protocol === "https:";
@@ -30,6 +38,14 @@
     return (
       (typeof window !== "undefined" && window.SFTCourseAgui) ||
       (typeof globalThis !== "undefined" && globalThis.SFTCourseAgui) ||
+      null
+    );
+  }
+
+  function pasteChips() {
+    return (
+      (typeof window !== "undefined" && window.SFTCoursePasteChips) ||
+      (typeof globalThis !== "undefined" && globalThis.SFTCoursePasteChips) ||
       null
     );
   }
@@ -57,8 +73,18 @@
    */
   function bodyHtmlForMessage(m) {
     var A = agui();
+    var P = pasteChips();
     var role = m.role || "user";
     var text = m.text != null ? String(m.text) : "";
+
+    if (role === "user" && P && typeof P.shouldRenderUserMessageCompact === "function") {
+      if (P.shouldRenderUserMessageCompact(m)) {
+        return P.renderCompactUserBodyHtml(m, {
+          escHtml: esc,
+          expandedIds: transcriptExpanded,
+        });
+      }
+    }
 
     if (A && role === "assistant") {
       var events =
@@ -94,9 +120,11 @@
 
   function saveMessages() {
     try {
-      // Persist role/text only; AG-UI events are re-synthesized on render so
-      // localStorage does not double-store large deltas.
+      var P = pasteChips();
       var slim = messages.map(function (m) {
+        if (P && typeof P.slimMessageForStorage === "function") {
+          return P.slimMessageForStorage(m);
+        }
         return { role: m.role, text: m.text, ts: m.ts };
       });
       localStorage.setItem(UI_KEY, JSON.stringify(slim));
@@ -147,6 +175,7 @@
       '  <div class="copilot-working" id="copilotWorking" hidden>Working…</div>' +
       '  <div class="copilot-offline-help" id="copilotOfflineHelp" hidden></div>' +
       '  <footer class="copilot-compose">' +
+      '    <div class="copilot-compose-chips" id="copilotComposeChips" hidden></div>' +
       '    <textarea id="copilotInput" class="copilot-input" rows="2" placeholder="Ask about this lesson…" aria-label="Message to copilot"></textarea>' +
       '    <div class="copilot-actions">' +
       '      <button type="button" class="btn ghost small" id="copilotClear">Clear session</button>' +
@@ -168,6 +197,7 @@
       messages: root.querySelector("#copilotMessages"),
       working: root.querySelector("#copilotWorking"),
       offlineHelp: root.querySelector("#copilotOfflineHelp"),
+      composeChips: root.querySelector("#copilotComposeChips"),
       input: root.querySelector("#copilotInput"),
       send: root.querySelector("#copilotSend"),
       clear: root.querySelector("#copilotClear"),
@@ -212,6 +242,33 @@
     els.location.textContent = "On: " + module + " · " + title;
   }
 
+  function renderComposeChips() {
+    if (!els || !els.composeChips) return;
+    var P = pasteChips();
+    if (!composeChips.length || !P) {
+      els.composeChips.hidden = true;
+      els.composeChips.innerHTML = "";
+      return;
+    }
+    els.composeChips.hidden = false;
+    els.composeChips.innerHTML = composeChips
+      .map(function (chip) {
+        return P.renderPasteChipHtml(chip, {
+          expanded: !!composeExpanded[chip.id],
+          editable: true,
+          escHtml: esc,
+        });
+      })
+      .join("");
+  }
+
+  function clearCompose() {
+    composeChips = [];
+    composeExpanded = {};
+    if (els && els.input) els.input.value = "";
+    renderComposeChips();
+  }
+
   function renderMessages() {
     if (!els || !els.messages) return;
     if (!messages.length) {
@@ -229,9 +286,17 @@
               : "user";
         var label =
           role === "assistant" ? "Copilot" : role === "system" ? "System" : "You";
+        var compact =
+          role === "user" &&
+          pasteChips() &&
+          pasteChips().shouldRenderUserMessageCompact(m);
         var bodyClass =
           "copilot-msg-body" +
-          (role === "assistant" ? " copilot-md" : " copilot-msg-body--plain");
+          (role === "assistant"
+            ? " copilot-md"
+            : compact
+              ? " copilot-msg-body--user-compact"
+              : " copilot-msg-body--plain");
         return (
           '<div class="copilot-msg copilot-msg--' +
           role +
@@ -262,12 +327,17 @@
     }
   }
 
+  function hasComposeContent() {
+    var free = els && els.input ? String(els.input.value || "").trim() : "";
+    return !!(free || composeChips.length);
+  }
+
   function setComposeEnabled(enabled) {
     if (!els) return;
     var allow = enabled && isSupportedOrigin() && !inFlight && status !== "offline";
     // Allow typing offline so users can draft; only gate Send.
     els.input.disabled = false;
-    els.send.disabled = !allow || !String(els.input.value || "").trim();
+    els.send.disabled = !allow || !hasComposeContent();
     els.clear.disabled = inFlight;
   }
 
@@ -297,12 +367,18 @@
     }, 1000);
   }
 
-  function pushMessage(role, text, events) {
+  function pushMessage(role, text, events, extra) {
     var entry = {
       role: role,
       text: String(text || ""),
       ts: Date.now(),
     };
+    if (extra && typeof extra === "object") {
+      if (extra.freeText != null) entry.freeText = String(extra.freeText);
+      if (Array.isArray(extra.pastes) && extra.pastes.length) {
+        entry.pastes = extra.pastes;
+      }
+    }
     if (Array.isArray(events) && events.length) {
       // Keep a compact event list for re-render; drop large rawEvent blobs if any.
       entry.events = events.map(function (ev) {
@@ -325,6 +401,7 @@
 
   function clearTranscript() {
     messages = [];
+    transcriptExpanded = {};
     saveMessages();
     renderMessages();
   }
@@ -373,6 +450,34 @@
     }
   }
 
+  function buildOutboundMessage() {
+    var free = els && els.input ? String(els.input.value || "") : "";
+    var P = pasteChips();
+    if (P && typeof P.assembleComposeMessage === "function") {
+      return {
+        freeText: free.trim(),
+        pastes: composeChips.slice(),
+        message: P.assembleComposeMessage(free, composeChips),
+      };
+    }
+    var joined = free.trim();
+    if (composeChips.length) {
+      var bodies = composeChips
+        .map(function (c) {
+          return c && c.text != null ? String(c.text) : "";
+        })
+        .filter(Boolean);
+      if (bodies.length) {
+        joined = [joined].concat(bodies).filter(Boolean).join("\n\n");
+      }
+    }
+    return {
+      freeText: free.trim(),
+      pastes: composeChips.slice(),
+      message: joined,
+    };
+  }
+
   async function sendMessage() {
     if (!els || inFlight) return;
     if (!isSupportedOrigin()) {
@@ -380,7 +485,8 @@
       showOfflineHelp(true);
       return;
     }
-    var text = String(els.input.value || "").trim();
+    var outbound = buildOutboundMessage();
+    var text = String(outbound.message || "").trim();
     if (!text) return;
 
     var ctx = null;
@@ -390,8 +496,11 @@
       console.warn(e);
     }
 
-    pushMessage("user", text);
-    els.input.value = "";
+    pushMessage("user", text, null, {
+      freeText: outbound.freeText,
+      pastes: outbound.pastes,
+    });
+    clearCompose();
     inFlight = true;
     setStatus("busy");
     startWorkTimer();
@@ -476,6 +585,7 @@
   async function clearSession() {
     if (inFlight) return;
     clearTranscript();
+    clearCompose();
     if (isSupportedOrigin()) {
       try {
         await fetch("/session/reset", { method: "POST" });
@@ -483,6 +593,84 @@
     }
     pushMessage("system", "Session cleared.");
     pollHealth();
+  }
+
+  function handleComposerPaste(ev) {
+    var P = pasteChips();
+    if (!P || typeof P.applyPasteToCompose !== "function") return;
+    var cd = ev.clipboardData || (window.clipboardData || null);
+    if (!cd || typeof cd.getData !== "function") return;
+    var pasted = "";
+    try {
+      pasted = cd.getData("text/plain") || cd.getData("text") || "";
+    } catch (_) {
+      pasted = "";
+    }
+    if (!pasted) return;
+    if (!P.shouldBecomePasteChip(pasted)) {
+      // Let the browser insert short pastes into the textarea normally.
+      return;
+    }
+    ev.preventDefault();
+    var free = els && els.input ? String(els.input.value || "") : "";
+    var result = P.applyPasteToCompose(free, composeChips, pasted);
+    composeChips = result.chips || [];
+    if (result.action === "expand" && result.expandedChipId) {
+      composeExpanded[result.expandedChipId] = true;
+    } else if (result.action === "chip" && result.chip && result.chip.id) {
+      // Keep new chips collapsed by default; free text stays for the short ask.
+      composeExpanded[result.chip.id] = false;
+    }
+    if (els && els.input && result.freeText != null) {
+      els.input.value = result.freeText;
+    }
+    renderComposeChips();
+    setComposeEnabled(true);
+  }
+
+  function onComposeChipsClick(ev) {
+    var toggle = ev.target.closest && ev.target.closest(".copilot-paste-chip-toggle");
+    if (!toggle || !els.composeChips.contains(toggle)) return;
+    var chipEl = toggle.closest(".copilot-paste-chip");
+    if (!chipEl) return;
+    var id = chipEl.getAttribute("data-chip-id");
+    if (!id) return;
+    composeExpanded[id] = !composeExpanded[id];
+    renderComposeChips();
+  }
+
+  function onComposeChipsInput(ev) {
+    var ta = ev.target;
+    if (!ta || !ta.classList || !ta.classList.contains("copilot-paste-chip-edit")) {
+      return;
+    }
+    var chipEl = ta.closest(".copilot-paste-chip");
+    if (!chipEl) return;
+    var id = chipEl.getAttribute("data-chip-id");
+    var P = pasteChips();
+    for (var i = 0; i < composeChips.length; i++) {
+      if (composeChips[i] && composeChips[i].id === id) {
+        var nextText = String(ta.value || "");
+        if (P && typeof P.createPasteChip === "function") {
+          composeChips[i] = P.createPasteChip(nextText, { id: id });
+        } else {
+          composeChips[i].text = nextText;
+        }
+        break;
+      }
+    }
+    setComposeEnabled(true);
+  }
+
+  function onMessagesClick(ev) {
+    var toggle = ev.target.closest && ev.target.closest(".copilot-paste-chip-toggle");
+    if (!toggle || !els.messages.contains(toggle)) return;
+    var chipEl = toggle.closest(".copilot-paste-chip");
+    if (!chipEl) return;
+    var id = chipEl.getAttribute("data-chip-id");
+    if (!id) return;
+    transcriptExpanded[id] = !transcriptExpanded[id];
+    renderMessages();
   }
 
   function bindEvents() {
@@ -499,6 +687,14 @@
     els.input.addEventListener("input", function () {
       setComposeEnabled(true);
     });
+    els.input.addEventListener("paste", handleComposerPaste);
+    if (els.composeChips) {
+      els.composeChips.addEventListener("click", onComposeChipsClick);
+      els.composeChips.addEventListener("input", onComposeChipsInput);
+    }
+    if (els.messages) {
+      els.messages.addEventListener("click", onMessagesClick);
+    }
     els.clear.addEventListener("click", function () {
       clearSession();
     });
@@ -530,6 +726,10 @@
     setCollapsed(collapsed);
 
     messages = loadMessages();
+    composeChips = [];
+    composeExpanded = {};
+    transcriptExpanded = {};
+    renderComposeChips();
     renderMessages();
 
     if (!isSupportedOrigin()) {

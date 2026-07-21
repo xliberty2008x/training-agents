@@ -37,9 +37,16 @@ const html = readFileSync(htmlPath, "utf8");
 assert(html.includes('src="sft-course-lib.js"'), "HTML loads sft-course-lib.js");
 assert(html.includes('src="sft-course-data.js"'), "HTML loads sft-course-data.js");
 assert(html.includes('src="sft-course-agui.js"'), "HTML loads AG-UI helpers");
+assert(html.includes('src="sft-course-paste-chips.js"'), "HTML loads paste-chip helpers");
 assert(html.includes('src="sft-course-copilot.js"'), "HTML loads copilot plugin");
 assert(html.includes("SFTCoursePlayer"), "playbook exposes SFTCoursePlayer");
 assert(html.indexOf("sft-course-agui.js") < html.indexOf("sft-course-copilot.js"), "AG-UI loads before copilot");
+assert(
+  html.indexOf("sft-course-paste-chips.js") < html.indexOf("sft-course-copilot.js"),
+  "paste-chips load before copilot"
+);
+assert(html.includes("copilot-paste-chip"), "playbook CSS includes paste chip styles");
+assert(html.includes("copilot-compose-chips"), "playbook CSS includes compose chip tray");
 
 // AG-UI pure helpers (event map + markdown) ship in docs and are dual-exported
 const aguiPath = join(__dirname, "sft-course-agui.js");
@@ -63,6 +70,86 @@ assert(rendered.html.includes("<h2"), "event path renders markdown heading");
 assert(rendered.html.includes("<ul"), "event path renders markdown list");
 assert(rendered.html.includes("code"), "event path renders fenced code");
 assert(!rendered.html.includes("<script"), "markdown escapes raw HTML");
+
+// #24 paste chips: pure helpers + structural wiring (shipped module, not reimplemented)
+const pastePath = join(__dirname, "sft-course-paste-chips.js");
+assert(existsSync(pastePath), "sft-course-paste-chips.js exists");
+const Paste = require("./sft-course-paste-chips.js");
+assert(typeof Paste.shouldBecomePasteChip === "function", "shouldBecomePasteChip exported");
+assert(typeof Paste.applyPasteToCompose === "function", "applyPasteToCompose exported");
+assert(typeof Paste.assembleComposeMessage === "function", "assembleComposeMessage exported");
+assert(typeof Paste.renderCompactUserBodyHtml === "function", "renderCompactUserBodyHtml exported");
+assert(typeof Paste.chipMetaLabel === "function", "chipMetaLabel exported");
+assert(Paste.PASTE_CHIP_MIN_CHARS >= 100, "char threshold documented and non-trivial");
+assert(Paste.PASTE_CHIP_MIN_LINES >= 2, "line threshold documented and non-trivial");
+
+const shortPaste = "hello short paste";
+assert(!Paste.shouldBecomePasteChip(shortPaste), "below-threshold paste stays plain text");
+const shortResult = Paste.applyPasteToCompose("", [], shortPaste);
+assert(shortResult.action === "insert", "short paste action=insert");
+assert(shortResult.freeText === shortPaste, "short paste lands in freeText");
+assert(shortResult.chips.length === 0, "short paste creates no chip");
+
+const longLines = ["line1", "line2", "line3", "line4", "line5"].join("\n");
+assert(Paste.shouldBecomePasteChip(longLines), "multi-line over threshold becomes chip");
+const longChars = "x".repeat(Paste.PASTE_CHIP_MIN_CHARS);
+assert(Paste.shouldBecomePasteChip(longChars), "char-length over threshold becomes chip");
+
+const chipResult = Paste.applyPasteToCompose("why did this fail?", [], longLines);
+assert(chipResult.action === "chip", "long paste action=chip");
+assert(chipResult.freeText === "why did this fail?", "long paste keeps free text");
+assert(chipResult.chips.length === 1, "long paste creates one chip");
+assert(chipResult.chips[0].text === longLines, "chip retains full paste body");
+assert(chipResult.chips[0].text.includes("line5"), "full body not truncated to preview");
+
+const rePaste = Paste.applyPasteToCompose(
+  chipResult.freeText,
+  chipResult.chips,
+  longLines
+);
+assert(rePaste.action === "expand", "re-paste same content expands existing chip");
+assert(rePaste.chips.length === 1, "re-paste does not duplicate chip");
+assert(rePaste.expandedChipId === chipResult.chips[0].id, "expand targets existing chip id");
+
+const sendMsg = Paste.assembleComposeMessage("why did this fail?", chipResult.chips);
+assert(sendMsg.includes("why did this fail?"), "send payload includes free-text ask");
+assert(sendMsg.includes("line5"), "send payload includes full paste, not only preview");
+assert(sendMsg.includes(longLines), "send payload embeds original paste verbatim");
+assert(!sendMsg.includes(chipResult.chips[0].preview) || sendMsg.includes(longLines), "preview alone is not the model payload");
+
+const multiA = Paste.createPasteChip("A".repeat(Paste.PASTE_CHIP_MIN_CHARS));
+const multiB = Paste.createPasteChip("B".repeat(Paste.PASTE_CHIP_MIN_CHARS + 10));
+const multiMsg = Paste.assembleComposeMessage("compare these", [multiA, multiB]);
+assert(multiMsg.includes("A".repeat(Paste.PASTE_CHIP_MIN_CHARS)), "multi-chip send includes paste A full text");
+assert(multiMsg.includes("B".repeat(Paste.PASTE_CHIP_MIN_CHARS + 10)), "multi-chip send includes paste B full text");
+
+const userMsg = {
+  role: "user",
+  freeText: "why did this fail?",
+  pastes: chipResult.chips,
+  text: sendMsg,
+};
+assert(Paste.shouldRenderUserMessageCompact(userMsg), "user message with pastes is compact");
+const compactHtml = Paste.renderCompactUserBodyHtml(userMsg);
+assert(compactHtml.includes("copilot-paste-chip"), "compact render emits paste chip markup");
+assert(compactHtml.includes("copilot-paste-chip-label"), "compact chip has label");
+assert(compactHtml.includes("why did this fail?"), "compact render keeps free text");
+assert(
+  compactHtml.includes("pasted") && compactHtml.includes("lines"),
+  "compact chip shows size meta, not the full dump as body text"
+);
+// Full dump is available inside collapsed body (escaped), but default toggle is collapsed
+assert(compactHtml.includes("hidden") || compactHtml.includes('data-expanded="false"'), "chip body collapsed by default");
+const slim = Paste.slimMessageForStorage(userMsg);
+assert(slim.pastes && slim.pastes[0].text === longLines, "storage slim keeps full paste text");
+assert(slim.text === sendMsg, "storage slim keeps full assembled text");
+
+const copilotSrc = readFileSync(join(__dirname, "sft-course-copilot.js"), "utf8");
+assert(copilotSrc.includes("handleComposerPaste") || copilotSrc.includes("paste"), "copilot handles paste events");
+assert(copilotSrc.includes("assembleComposeMessage") || copilotSrc.includes("buildOutboundMessage"), "copilot assembles full send payload");
+assert(copilotSrc.includes("SFTCoursePasteChips") || copilotSrc.includes("pasteChips"), "copilot uses paste-chip module");
+assert(copilotSrc.includes("copilotComposeChips"), "copilot compose chip tray id present");
+assert(copilotSrc.includes("pastes"), "copilot persists pastes on user turns");
 
 // #18 dock overflow containment: assert shipped CSS (not a re-implemented sheet)
 function cssRuleHas(selectorSnippet, propSnippets) {
