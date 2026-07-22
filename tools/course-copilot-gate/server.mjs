@@ -8,6 +8,10 @@ import { loadSession, saveSession, resetSession } from "./session.mjs";
 import { runGrokTurn } from "./grok.mjs";
 import { resolveDocsPath } from "./static.mjs";
 import { textToAguiEvents, errorToAguiEvents } from "./agui.mjs";
+import { enqueueJob } from "./feedback/queue.mjs";
+import { shouldEnqueuePassive } from "./feedback/prefilter.mjs";
+import { listUnseen, ackNotifications } from "./feedback/notify.mjs";
+import { createFeedbackRunner } from "./feedback/runner.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -137,6 +141,27 @@ export function createServer(options = {}) {
   const rulesPath =
     options.rulesPath || path.join(__dirname, "tutor-rules.md");
   const grokEnv = options.grokEnv || undefined;
+
+  const feedbackEnabled =
+    options.feedbackEnabled ?? process.env.FEEDBACK_ENABLED !== "false";
+  const feedbackPassive =
+    options.feedbackPassive ?? process.env.FEEDBACK_PASSIVE !== "false";
+  const feedbackGithubRepo =
+    options.feedbackGithubRepo ||
+    process.env.FEEDBACK_GITHUB_REPO ||
+    "xliberty2008x/training-agents";
+  const feedbackGrokBin = options.feedbackGrokBin || grokBin;
+  const feedbackGrokExtraArgs = Array.isArray(options.feedbackGrokExtraArgs)
+    ? options.feedbackGrokExtraArgs
+    : extraArgs;
+  const ghBin = options.ghBin || process.env.GH_BIN || "gh";
+  const ghExtraArgs = Array.isArray(options.ghExtraArgs)
+    ? options.ghExtraArgs
+    : [];
+  const feedbackIntervalMs =
+    options.feedbackIntervalMs != null
+      ? Number(options.feedbackIntervalMs)
+      : 1500;
 
   let rulesText = "";
   try {
@@ -356,6 +381,21 @@ export function createServer(options = {}) {
         durationMs: result.durationMs,
         error: result.error,
       });
+
+      // Cheap sync only — never block chat on validator/gh.
+      if (result.ok && feedbackEnabled && feedbackPassive) {
+        try {
+          if (shouldEnqueuePassive({ source: "passive", text: message })) {
+            enqueueJob(repoRoot, {
+              source: "passive",
+              text: message,
+              context,
+            });
+          }
+        } catch (err) {
+          console.error("[feedback] passive enqueue failed", err);
+        }
+      }
     } catch (err) {
       state.lastError = err && err.message ? err.message : String(err);
       sendJson(res, 500, {
@@ -372,6 +412,89 @@ export function createServer(options = {}) {
     } finally {
       state.busy = false;
     }
+  }
+
+  async function handleFeedback(req, res) {
+    if (!feedbackEnabled) {
+      sendJson(res, 503, { ok: false, error: "feedback_disabled" });
+      return;
+    }
+
+    let bodyRaw;
+    try {
+      bodyRaw = await readBody(req);
+    } catch (err) {
+      sendJson(res, err.code === "BODY_TOO_LARGE" ? 413 : 400, {
+        ok: false,
+        error: err.message || "bad body",
+      });
+      return;
+    }
+
+    let parsed;
+    try {
+      parsed = bodyRaw ? JSON.parse(bodyRaw) : {};
+    } catch {
+      sendJson(res, 400, { ok: false, error: "invalid json" });
+      return;
+    }
+
+    const commentRaw =
+      parsed && parsed.comment != null
+        ? parsed.comment
+        : parsed && parsed.text != null
+          ? parsed.text
+          : "";
+    const comment = String(commentRaw).trim();
+    if (!comment) {
+      sendJson(res, 400, { ok: false, error: "empty comment" });
+      return;
+    }
+
+    const context =
+      parsed && parsed.context && typeof parsed.context === "object"
+        ? parsed.context
+        : {};
+
+    // Must not await validation or gh — enqueue only.
+    const job = enqueueJob(repoRoot, {
+      source: "explicit",
+      text: comment,
+      context,
+    });
+    sendJson(res, 200, { ok: true, queued: true, id: job.id });
+  }
+
+  async function handleFeedbackNotifications(_req, res) {
+    sendJson(res, 200, {
+      ok: true,
+      notifications: listUnseen(repoRoot),
+    });
+  }
+
+  async function handleFeedbackAck(req, res) {
+    let bodyRaw;
+    try {
+      bodyRaw = await readBody(req);
+    } catch (err) {
+      sendJson(res, err.code === "BODY_TOO_LARGE" ? 413 : 400, {
+        ok: false,
+        error: err.message || "bad body",
+      });
+      return;
+    }
+
+    let parsed;
+    try {
+      parsed = bodyRaw ? JSON.parse(bodyRaw) : {};
+    } catch {
+      sendJson(res, 400, { ok: false, error: "invalid json" });
+      return;
+    }
+
+    const ids = Array.isArray(parsed?.ids) ? parsed.ids : [];
+    ackNotifications(repoRoot, ids);
+    sendJson(res, 200, { ok: true });
   }
 
   async function handleStatic(req, res, urlPath) {
@@ -443,6 +566,18 @@ export function createServer(options = {}) {
         await handleSessionReset(req, res);
         return;
       }
+      if (method === "POST" && pathname === "/feedback") {
+        await handleFeedback(req, res);
+        return;
+      }
+      if (method === "GET" && pathname === "/feedback/notifications") {
+        await handleFeedbackNotifications(req, res);
+        return;
+      }
+      if (method === "POST" && pathname === "/feedback/notifications/ack") {
+        await handleFeedbackAck(req, res);
+        return;
+      }
       if (method === "GET") {
         await handleStatic(req, res, pathname + url.search + url.hash);
         return;
@@ -471,7 +606,22 @@ export function createServer(options = {}) {
     });
   }
 
+  const feedbackRunner = feedbackEnabled
+    ? createFeedbackRunner({
+        repoRoot,
+        cwd: repoRoot,
+        grokBin: feedbackGrokBin,
+        grokExtraArgs: feedbackGrokExtraArgs,
+        ghBin,
+        ghExtraArgs,
+        githubRepo: feedbackGithubRepo,
+        enabled: feedbackEnabled,
+        intervalMs: feedbackIntervalMs,
+      })
+    : null;
+
   function close() {
+    if (feedbackRunner) feedbackRunner.stop();
     return new Promise((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
@@ -482,6 +632,7 @@ export function createServer(options = {}) {
     listen,
     close,
     state,
+    feedbackRunner,
     options: { host, port, repoRoot, docsRoot, grokBin },
   };
 }
