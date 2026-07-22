@@ -2,6 +2,7 @@
 import { claimNextPending, markJob } from "./queue.mjs";
 import { runValidator } from "./validate.mjs";
 import { createGithubIssue } from "./create-issue.mjs";
+import { buildIssueBody } from "./issue-body.mjs";
 import { fingerprint, isDuplicate, rememberFingerprint } from "./dedupe.mjs";
 import { appendNotification } from "./notify.mjs";
 
@@ -56,12 +57,14 @@ export async function processNextJob(opts = {}) {
       return { processed: true, created: false, reason: "duplicate", jobId: job.id };
     }
 
+    const issueBody = buildIssueBody({ job, verdict: validation.verdict });
+
     let create = await createGithubIssue({
       ghBin,
       ghExtraArgs,
       repo: githubRepo,
       title: validation.verdict.title,
-      body: validation.verdict.body,
+      body: issueBody,
       labels: validation.verdict.labels,
       timeoutMs: ghTimeoutMs,
     });
@@ -73,7 +76,7 @@ export async function processNextJob(opts = {}) {
         ghExtraArgs,
         repo: githubRepo,
         title: validation.verdict.title,
-        body: validation.verdict.body,
+        body: issueBody,
         labels: [],
         timeoutMs: ghTimeoutMs,
       });
