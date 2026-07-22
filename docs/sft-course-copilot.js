@@ -945,10 +945,10 @@
       var items = (data && data.notifications) || [];
       if (!items.length) return;
       var ids = [];
-      for (var i = 0; i < items.length; i++) {
-        showToast(items[i]);
-        if (items[i] && items[i].id != null) ids.push(items[i].id);
-      }
+      items.forEach(function (item) {
+        showToast(item);
+        if (item && item.id != null) ids.push(item.id);
+      });
       if (!ids.length) return;
       await fetch("/feedback/notifications/ack", {
         method: "POST",

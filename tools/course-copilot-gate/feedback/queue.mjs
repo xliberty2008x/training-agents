@@ -28,13 +28,16 @@ export function enqueueJob(repoRoot, jobInput, opts = {}) {
   let pending = jobs.filter((j) => j.status === "pending");
 
   while (pending.length >= maxPending) {
-    const dropPassive = pending.find((j) => j.source === "passive");
-    const drop = dropPassive || pending[0];
-    jobs = jobs.map((j) =>
-      j.id === drop.id
-        ? { ...j, status: "skipped", result: "queue_full", updatedAt: new Date().toISOString() }
-        : j,
-    );
+    const drop = pending.find((j) => j.source === "passive") || pending[0];
+    const idx = jobs.findIndex((j) => j.id === drop.id);
+    if (idx >= 0) {
+      jobs[idx] = {
+        ...jobs[idx],
+        status: "skipped",
+        result: "queue_full",
+        updatedAt: new Date().toISOString(),
+      };
+    }
     pending = jobs.filter((j) => j.status === "pending");
   }
 

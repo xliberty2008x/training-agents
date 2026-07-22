@@ -1,10 +1,14 @@
-// tools/course-copilot-gate/feedback/runner.mjs
 import { claimNextPending, markJob } from "./queue.mjs";
 import { runValidator } from "./validate.mjs";
 import { createGithubIssue } from "./create-issue.mjs";
 import { buildIssueBody } from "./issue-body.mjs";
 import { fingerprint, isDuplicate, rememberFingerprint } from "./dedupe.mjs";
 import { appendNotification } from "./notify.mjs";
+
+function done(repoRoot, jobId, patch, outcome) {
+  markJob(repoRoot, jobId, { status: "done", ...patch });
+  return { processed: true, jobId, created: false, ...outcome };
+}
 
 /**
  * Claim one pending job and run: validate → dedupe → gh issue → notify.
@@ -38,57 +42,51 @@ export async function processNextJob(opts = {}) {
     });
 
     if (!validation.ok || !validation.verdict.valuable) {
-      markJob(repoRoot, job.id, {
-        status: "done",
-        result: "discarded",
-        reason: validation.verdict?.reason || validation.error || "not_valuable",
-      });
-      return { processed: true, created: false, reason: "discarded", jobId: job.id };
+      return done(
+        repoRoot,
+        job.id,
+        {
+          result: "discarded",
+          reason: validation.verdict?.reason || validation.error || "not_valuable",
+        },
+        { reason: "discarded" },
+      );
     }
 
     const claim = validation.verdict.title || job.text;
     const lessonId = job.context?.lessonId || null;
     const fp = fingerprint({ lessonId, claim });
     if (isDuplicate(repoRoot, fp)) {
-      markJob(repoRoot, job.id, {
-        status: "done",
-        result: "duplicate",
-      });
-      return { processed: true, created: false, reason: "duplicate", jobId: job.id };
+      return done(repoRoot, job.id, { result: "duplicate" }, { reason: "duplicate" });
     }
 
     const issueBody = buildIssueBody({ job, verdict: validation.verdict });
-
-    let create = await createGithubIssue({
+    const issueBase = {
       ghBin,
       ghExtraArgs,
       repo: githubRepo,
       title: validation.verdict.title,
       body: issueBody,
-      labels: validation.verdict.labels,
       timeoutMs: ghTimeoutMs,
+    };
+
+    let create = await createGithubIssue({
+      ...issueBase,
+      labels: validation.verdict.labels,
     });
 
     // One retry without labels if labels failed
     if (!create.ok && /label/i.test(String(create.error || ""))) {
-      create = await createGithubIssue({
-        ghBin,
-        ghExtraArgs,
-        repo: githubRepo,
-        title: validation.verdict.title,
-        body: issueBody,
-        labels: [],
-        timeoutMs: ghTimeoutMs,
-      });
+      create = await createGithubIssue({ ...issueBase, labels: [] });
     }
 
     if (!create.ok) {
-      markJob(repoRoot, job.id, {
-        status: "done",
-        result: "gh_failed",
-        reason: create.error,
-      });
-      return { processed: true, created: false, reason: "gh_failed", jobId: job.id };
+      return done(
+        repoRoot,
+        job.id,
+        { result: "gh_failed", reason: create.error },
+        { reason: "gh_failed" },
+      );
     }
 
     rememberFingerprint(repoRoot, fp);
@@ -111,12 +109,15 @@ export async function processNextJob(opts = {}) {
       number: create.number,
     };
   } catch (err) {
-    markJob(repoRoot, job.id, {
-      status: "done",
-      result: "error",
-      reason: err && err.message ? err.message : String(err),
-    });
-    return { processed: true, created: false, reason: "error", jobId: job.id };
+    return done(
+      repoRoot,
+      job.id,
+      {
+        result: "error",
+        reason: err && err.message ? err.message : String(err),
+      },
+      { reason: "error" },
+    );
   }
 }
 

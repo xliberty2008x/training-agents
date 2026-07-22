@@ -414,12 +414,11 @@ export function createServer(options = {}) {
     }
   }
 
-  async function handleFeedback(req, res) {
-    if (!feedbackEnabled) {
-      sendJson(res, 503, { ok: false, error: "feedback_disabled" });
-      return;
-    }
-
+  /**
+   * Parse JSON body for feedback routes.
+   * Returns { ok: true, value } or { ok: false } after writing the error response.
+   */
+  async function readFeedbackJson(req, res) {
     let bodyRaw;
     try {
       bodyRaw = await readBody(req);
@@ -428,23 +427,29 @@ export function createServer(options = {}) {
         ok: false,
         error: err.message || "bad body",
       });
-      return;
+      return { ok: false };
     }
-
-    let parsed;
     try {
-      parsed = bodyRaw ? JSON.parse(bodyRaw) : {};
+      return { ok: true, value: bodyRaw ? JSON.parse(bodyRaw) : {} };
     } catch {
       sendJson(res, 400, { ok: false, error: "invalid json" });
+      return { ok: false };
+    }
+  }
+
+  async function handleFeedback(req, res) {
+    if (!feedbackEnabled) {
+      sendJson(res, 503, { ok: false, error: "feedback_disabled" });
       return;
     }
 
-    const commentRaw =
-      parsed && parsed.comment != null
-        ? parsed.comment
-        : parsed && parsed.text != null
-          ? parsed.text
-          : "";
+    const body = await readFeedbackJson(req, res);
+    if (!body.ok) return;
+    const parsed = body.value;
+
+    let commentRaw = "";
+    if (parsed && parsed.comment != null) commentRaw = parsed.comment;
+    else if (parsed && parsed.text != null) commentRaw = parsed.text;
     const comment = String(commentRaw).trim();
     if (!comment) {
       sendJson(res, 400, { ok: false, error: "empty comment" });
@@ -473,26 +478,10 @@ export function createServer(options = {}) {
   }
 
   async function handleFeedbackAck(req, res) {
-    let bodyRaw;
-    try {
-      bodyRaw = await readBody(req);
-    } catch (err) {
-      sendJson(res, err.code === "BODY_TOO_LARGE" ? 413 : 400, {
-        ok: false,
-        error: err.message || "bad body",
-      });
-      return;
-    }
+    const body = await readFeedbackJson(req, res);
+    if (!body.ok) return;
 
-    let parsed;
-    try {
-      parsed = bodyRaw ? JSON.parse(bodyRaw) : {};
-    } catch {
-      sendJson(res, 400, { ok: false, error: "invalid json" });
-      return;
-    }
-
-    const ids = Array.isArray(parsed?.ids) ? parsed.ids : [];
+    const ids = Array.isArray(body.value?.ids) ? body.value.ids : [];
     ackNotifications(repoRoot, ids);
     sendJson(res, 200, { ok: true });
   }
@@ -606,6 +595,7 @@ export function createServer(options = {}) {
     });
   }
 
+  // Only started when feedback is enabled; processNextJob defaults enabled=true.
   const feedbackRunner = feedbackEnabled
     ? createFeedbackRunner({
         repoRoot,
@@ -615,7 +605,6 @@ export function createServer(options = {}) {
         ghBin,
         ghExtraArgs,
         githubRepo: feedbackGithubRepo,
-        enabled: feedbackEnabled,
         intervalMs: feedbackIntervalMs,
       })
     : null;

@@ -1,4 +1,3 @@
-// tools/course-copilot-gate/feedback/create-issue.mjs
 import { spawn } from "node:child_process";
 
 /**
@@ -38,53 +37,48 @@ export function createGithubIssue({
     let settled = false;
     let stdout = "";
     let stderr = "";
+    let timer = null;
     const start = Date.now();
-    const finish = (result) => {
+
+    function finish(result) {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       resolve({ ...result, durationMs: Date.now() - start });
-    };
+    }
+
+    function fail(error) {
+      finish({ ok: false, url: null, number: null, error });
+    }
 
     const child = spawn(ghBin, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: env || process.env,
     });
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       try {
         child.kill("SIGTERM");
       } catch {
         /* ignore */
       }
-      finish({
-        ok: false,
-        url: null,
-        number: null,
-        error: "gh_timeout",
-      });
+      fail("gh_timeout");
     }, timeoutMs);
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (c) => (stdout += c));
-    child.stderr.on("data", (c) => (stderr += c));
+    child.stdout.on("data", (c) => {
+      stdout += c;
+    });
+    child.stderr.on("data", (c) => {
+      stderr += c;
+    });
     child.on("error", (err) => {
-      finish({
-        ok: false,
-        url: null,
-        number: null,
-        error: err.message || String(err),
-      });
+      fail(err.message || String(err));
     });
     child.on("close", (code) => {
       if (code !== 0) {
-        finish({
-          ok: false,
-          url: null,
-          number: null,
-          error: stderr.trim() || `gh_exit_${code}`,
-        });
+        fail(stderr.trim() || `gh_exit_${code}`);
         return;
       }
       const url =

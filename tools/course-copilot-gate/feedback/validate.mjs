@@ -1,4 +1,3 @@
-// tools/course-copilot-gate/feedback/validate.mjs
 import { runGrokTurn } from "../grok.mjs";
 import { buildValidatorPrompt, parseVerdict } from "./validator-prompt.mjs";
 
@@ -31,6 +30,7 @@ export async function runValidator({
   });
 
   if (!result.ok) {
+    const error = result.error || "validator failed";
     return {
       ok: false,
       verdict: {
@@ -38,17 +38,16 @@ export async function runValidator({
         title: "",
         body: "",
         labels: [],
-        reason: result.error || "validator failed",
+        reason: error,
       },
-      error: result.error || "validator failed",
+      error,
       durationMs: result.durationMs,
     };
   }
 
-  const verdict = parseVerdict(result.text);
   return {
     ok: true,
-    verdict,
+    verdict: parseVerdict(result.text),
     error: null,
     durationMs: result.durationMs,
   };

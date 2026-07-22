@@ -1,5 +1,3 @@
-// tools/course-copilot-gate/feedback/validator-prompt.mjs
-
 /**
  * Build a one-shot triage prompt for course-content feedback validation.
  * The model must reply with JSON only (optionally fenced).
@@ -7,13 +5,7 @@
 export function buildValidatorPrompt({ job } = {}) {
   const j = job && typeof job === "object" ? job : {};
   const ctx = j.context && typeof j.context === "object" ? j.context : {};
-  const source = j.source != null ? String(j.source) : "";
-  const text = j.text != null ? String(j.text) : "";
-  const lessonId = ctx.lessonId != null ? String(ctx.lessonId) : "";
-  const module = ctx.module != null ? String(ctx.module) : "";
-  const lessonTitle = ctx.lessonTitle != null ? String(ctx.lessonTitle) : "";
-  const view = ctx.view != null ? String(ctx.view) : "";
-  const course = ctx.course != null ? String(ctx.course) : "";
+  const str = (v) => (v != null ? String(v) : "");
 
   return [
     "You are a strict course-content triage agent for an SFT / agent training course.",
@@ -26,7 +18,7 @@ export function buildValidatorPrompt({ job } = {}) {
     "",
     "Reply with JSON only (no prose outside the JSON). You may wrap it in a ```json fence.",
     "Schema:",
-    '{',
+    "{",
     '  "valuable": boolean,',
     '  "title": string,   // short issue title when valuable; empty string when not',
     '  "body": string,    // issue body when valuable; empty string when not',
@@ -38,13 +30,13 @@ export function buildValidatorPrompt({ job } = {}) {
     "If valuable is false, still provide a short reason.",
     "",
     "## Feedback job",
-    `source: ${source}`,
-    `text: ${text}`,
-    `lessonId: ${lessonId}`,
-    `module: ${module}`,
-    `lessonTitle: ${lessonTitle}`,
-    `view: ${view}`,
-    `course: ${course}`,
+    `source: ${str(j.source)}`,
+    `text: ${str(j.text)}`,
+    `lessonId: ${str(ctx.lessonId)}`,
+    `module: ${str(ctx.module)}`,
+    `lessonTitle: ${str(ctx.lessonTitle)}`,
+    `view: ${str(ctx.view)}`,
+    `course: ${str(ctx.course)}`,
   ].join("\n");
 }
 

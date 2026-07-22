@@ -39,10 +39,12 @@ export function rememberFingerprint(repoRoot, fp) {
   const keys = Object.keys(data.fingerprints);
   const max = data.max || 200;
   if (keys.length > max) {
-    keys
-      .sort((a, b) => String(data.fingerprints[a]).localeCompare(String(data.fingerprints[b])))
-      .slice(0, keys.length - max)
-      .forEach((k) => delete data.fingerprints[k]);
+    const overflow = keys
+      .sort((a, b) =>
+        String(data.fingerprints[a]).localeCompare(String(data.fingerprints[b])),
+      )
+      .slice(0, keys.length - max);
+    for (const k of overflow) delete data.fingerprints[k];
   }
   save(repoRoot, data);
 }
