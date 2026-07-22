@@ -19,6 +19,7 @@
   var UI_KEY = "sft-course-copilot-ui-v1";
   var COLLAPSED_KEY = "sft-course-copilot-collapsed-v1";
   var HEALTH_MS = 7000;
+  var NOTIFY_MS = 4000;
   var GATE_URL_HINT =
     "Start the gate, then open: http://127.0.0.1:8787/sft-interactive-playbook.html";
   var NEAR_EDGE_PX = 48;
@@ -43,6 +44,7 @@
   var status = "offline"; // online | offline | busy | error
   var inFlight = false;
   var healthTimer = null;
+  var notifyTimer = null;
   var workTimer = null;
   var workStartedAt = 0;
   var unsub = null;
@@ -253,6 +255,47 @@
       .join("");
   }
 
+  /** Markup for the course-content Feedback panel (hidden until toggled). */
+  function buildFeedbackPanelHtml() {
+    return (
+      '<div class="copilot-feedback" id="copilotFeedback" hidden>' +
+      '  <div class="copilot-feedback-title">Feedback on course content</div>' +
+      '  <textarea id="copilotFeedbackInput" class="copilot-feedback-input" rows="3" ' +
+      '    placeholder="What is wrong or missing in this lesson?" ' +
+      '    aria-label="Course content feedback"></textarea>' +
+      '  <div class="copilot-feedback-actions">' +
+      '    <button type="button" class="btn ghost small" id="copilotFeedbackCancel">Cancel</button>' +
+      '    <button type="button" class="btn small" id="copilotFeedbackSubmit">Submit</button>' +
+      "  </div>" +
+      "</div>"
+    );
+  }
+
+  /**
+   * Toast HTML for a created GitHub issue notification.
+   * Escapes title/url for safe insertion into the dock.
+   */
+  function buildToastHtml(item) {
+    var title = item && item.title ? String(item.title) : "Issue created";
+    var url = item && item.url ? String(item.url) : "";
+    var num = item && item.number != null ? "#" + item.number : "";
+    return (
+      '<div class="copilot-toast" role="status">' +
+      '<div class="copilot-toast-title">Issue created' +
+      (num ? " " + esc(num) : "") +
+      "</div>" +
+      '<div class="copilot-toast-body">' +
+      esc(title) +
+      "</div>" +
+      (url
+        ? '<a class="copilot-toast-link" href="' +
+          esc(url) +
+          '" target="_blank" rel="noopener noreferrer">Open on GitHub</a>'
+        : "") +
+      "</div>"
+    );
+  }
+
   function loadMessages() {
     try {
       var raw = localStorage.getItem(UI_KEY);
@@ -330,10 +373,13 @@
       '    <div class="copilot-compose-chips" id="copilotComposeChips" hidden></div>' +
       '    <textarea id="copilotInput" class="copilot-input" rows="2" placeholder="Ask about this lesson…" aria-label="Message to copilot"></textarea>' +
       '    <div class="copilot-actions">' +
+      '      <button type="button" class="btn ghost small" id="copilotFeedbackToggle">Feedback</button>' +
       '      <button type="button" class="btn ghost small" id="copilotClear">Clear session</button>' +
       '      <button type="button" class="btn small" id="copilotSend">Send</button>' +
       "    </div>" +
       "  </footer>" +
+      buildFeedbackPanelHtml() +
+      '<div class="copilot-toast-host" id="copilotToastHost" aria-live="polite"></div>' +
       "</div>";
 
     if (app) app.appendChild(aside);
@@ -356,6 +402,12 @@
       clear: root.querySelector("#copilotClear"),
       collapse: root.querySelector("#copilotCollapse"),
       expand: root.querySelector("#copilotExpand"),
+      feedback: root.querySelector("#copilotFeedback"),
+      feedbackInput: root.querySelector("#copilotFeedbackInput"),
+      feedbackSubmit: root.querySelector("#copilotFeedbackSubmit"),
+      feedbackCancel: root.querySelector("#copilotFeedbackCancel"),
+      feedbackToggle: root.querySelector("#copilotFeedbackToggle"),
+      toastHost: root.querySelector("#copilotToastHost"),
     };
   }
 
@@ -857,6 +909,65 @@
     pollHealth();
   }
 
+  function setFeedbackOpen(open) {
+    if (!els || !els.feedback) return;
+    els.feedback.hidden = !open;
+  }
+
+  async function submitFeedback() {
+    if (!isSupportedOrigin() || status === "offline") return;
+    var comment =
+      els && els.feedbackInput ? String(els.feedbackInput.value || "").trim() : "";
+    if (!comment) return;
+    var ctx = null;
+    try {
+      ctx = player && typeof player.getContext === "function" ? player.getContext() : null;
+    } catch (_) {}
+    try {
+      await fetch("/feedback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ comment: comment, context: ctx || {} }),
+      });
+    } catch (_) {
+      /* silent — no toast / no chat messages on failure */
+    }
+    if (els && els.feedbackInput) els.feedbackInput.value = "";
+    setFeedbackOpen(false);
+  }
+
+  async function pollNotifications() {
+    if (!isSupportedOrigin() || status === "offline") return;
+    try {
+      var res = await fetch("/feedback/notifications", { cache: "no-store" });
+      if (!res.ok) return;
+      var data = await res.json();
+      var items = (data && data.notifications) || [];
+      if (!items.length) return;
+      var ids = [];
+      for (var i = 0; i < items.length; i++) {
+        showToast(items[i]);
+        if (items[i] && items[i].id != null) ids.push(items[i].id);
+      }
+      if (!ids.length) return;
+      await fetch("/feedback/notifications/ack", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids: ids }),
+      });
+    } catch (_) {
+      /* silent */
+    }
+  }
+
+  function showToast(item) {
+    if (!els || !els.toastHost) return;
+    els.toastHost.innerHTML = buildToastHtml(item);
+    setTimeout(function () {
+      if (els && els.toastHost) els.toastHost.innerHTML = "";
+    }, 8000);
+  }
+
 
   function handleComposerPaste(ev) {
     var P = pasteChips();
@@ -959,6 +1070,22 @@
     els.clear.addEventListener("click", function () {
       clearSession();
     });
+    if (els.feedbackToggle) {
+      els.feedbackToggle.addEventListener("click", function () {
+        var open = !!(els.feedback && els.feedback.hidden);
+        setFeedbackOpen(open);
+      });
+    }
+    if (els.feedbackCancel) {
+      els.feedbackCancel.addEventListener("click", function () {
+        setFeedbackOpen(false);
+      });
+    }
+    if (els.feedbackSubmit) {
+      els.feedbackSubmit.addEventListener("click", function () {
+        submitFeedback();
+      });
+    }
     els.collapse.addEventListener("click", function () {
       setCollapsed(true);
     });
@@ -1011,6 +1138,9 @@
     if (healthTimer) clearInterval(healthTimer);
     pollHealth();
     healthTimer = setInterval(pollHealth, HEALTH_MS);
+    if (notifyTimer) clearInterval(notifyTimer);
+    pollNotifications();
+    notifyTimer = setInterval(pollNotifications, NOTIFY_MS);
   }
 
   function init(opts) {
@@ -1108,6 +1238,8 @@
     isNearLiveEdgeMetrics: isNearLiveEdgeMetrics,
     followModeAfterScrollIntent: followModeAfterScrollIntent,
     buildTranscriptHtml: buildTranscriptHtml,
+    buildFeedbackPanelHtml: buildFeedbackPanelHtml,
+    buildToastHtml: buildToastHtml,
     _test: _testApi,
   };
 });
