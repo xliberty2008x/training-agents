@@ -48,6 +48,20 @@ assert(
 assert(html.includes("copilot-paste-chip"), "playbook CSS includes paste chip styles");
 assert(html.includes("copilot-compose-chips"), "playbook CSS includes compose chip tray");
 
+// Course feedback pure helpers (panel + issue toast markup builders)
+const Copilot = require("./sft-course-copilot.js");
+assert(typeof Copilot.buildFeedbackPanelHtml === "function", "buildFeedbackPanelHtml");
+assert(typeof Copilot.buildToastHtml === "function", "buildToastHtml");
+const feedbackPanel = Copilot.buildFeedbackPanelHtml();
+assert(feedbackPanel.indexOf("copilotFeedback") !== -1, "feedback panel id");
+const feedbackToast = Copilot.buildToastHtml({
+  title: "m2l3 quiz",
+  url: "https://github.com/xliberty2008x/training-agents/issues/1",
+  number: 1,
+});
+assert(feedbackToast.indexOf("Issue created") !== -1, "toast label");
+assert(feedbackToast.indexOf("issues/1") !== -1, "toast url");
+
 // AG-UI pure helpers (event map + markdown) ship in docs and are dual-exported
 const aguiPath = join(__dirname, "sft-course-agui.js");
 assert(existsSync(aguiPath), "sft-course-agui.js exists");
